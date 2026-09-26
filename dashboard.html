@@ -1,0 +1,414 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ShowerBot control</title>
+<style>
+  /* No external fonts or scripts: the laptop has no internet while on the car's WiFi. */
+  :root {
+    --tile: #EAF4F4;
+    --grout: #C9DADB;
+    --surface: #FFFFFF;
+    --ink: #0B3C49;
+    --ink-soft: #4F7480;
+    --rinse: #2B8CA3;
+    --soap: #F4B6C2;
+    --soap-ink: #5A1E2B;
+    --warn: #C8553D;
+    --font: "Avenir Next", "Segoe UI Variable Display", "Segoe UI", Ubuntu, "Helvetica Neue", system-ui, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --tile: #0F2229;
+      --grout: #1B3842;
+      --surface: #132C34;
+      --ink: #E3F1F2;
+      --ink-soft: #9BBBC3;
+      --rinse: #5CC0D6;
+      --soap: #F4B6C2;
+      --soap-ink: #4A1824;
+      --warn: #F08A70;
+    }
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    font-family: var(--font);
+    color: var(--ink);
+    line-height: 1.45;
+    min-height: 100vh;
+    background-color: var(--tile);
+    background-image:
+      linear-gradient(var(--grout) 2px, transparent 2px),
+      linear-gradient(90deg, var(--grout) 2px, transparent 2px);
+    background-size: 48px 48px;
+  }
+
+  .app {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 20px;
+    display: grid;
+    gap: 18px;
+    grid-template-columns: minmax(0, 1.6fr) minmax(300px, 1fr);
+    grid-template-areas:
+      "head   head"
+      "cam    drive"
+      "sense  shower";
+  }
+  @media (max-width: 860px) {
+    .app {
+      grid-template-columns: 1fr;
+      grid-template-areas: "head" "cam" "shower" "drive" "sense";
+    }
+  }
+
+  header { grid-area: head; display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  h1 { font-size: 1.9rem; font-weight: 800; letter-spacing: -0.02em; margin: 0; }
+  h2 { font-size: 1.05rem; font-weight: 700; margin: 0 0 12px; }
+
+  .status {
+    display: inline-flex; align-items: center; gap: 8px;
+    background: var(--surface); border: 2px solid var(--grout);
+    padding: 6px 14px; border-radius: 999px; font-weight: 600; font-size: 0.95rem;
+  }
+  .status .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--ink-soft); }
+  .status[data-s="ok"] .dot { background: var(--rinse); }
+  .status[data-s="bad"] .dot { background: var(--warn); }
+
+  .panel { background: var(--surface); border: 2px solid var(--grout); border-radius: 10px; padding: 18px; }
+
+  /* Camera */
+  .cam { grid-area: cam; padding: 0; overflow: hidden; display: flex; flex-direction: column; }
+  .cam-frame { position: relative; aspect-ratio: 4 / 3; background: #06181D; }
+  .cam-frame img { width: 100%; height: 100%; object-fit: contain; display: block; }
+  .cam-msg {
+    position: absolute; inset: 0; display: none; place-content: center; text-align: center;
+    padding: 24px; color: #D6E8EB; font-size: 0.95rem;
+  }
+  .cam-frame.error .cam-msg { display: grid; }
+  .cam-frame.error img { visibility: hidden; }
+  .cam-bar { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 10px 14px; font-size: 0.9rem; color: var(--ink-soft); }
+
+  button { font: inherit; color: inherit; cursor: pointer; }
+  button:focus-visible, input:focus-visible { outline: 3px solid var(--rinse); outline-offset: 2px; }
+  .ghost { background: none; border: 2px solid var(--grout); border-radius: 8px; padding: 6px 12px; font-weight: 600; }
+
+  /* Driving */
+  .drive { grid-area: drive; }
+  .pad { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; max-width: 260px; margin: 0 auto 14px; touch-action: none; user-select: none; }
+  .pad button {
+    aspect-ratio: 1; border: 2px solid var(--grout); border-radius: 12px;
+    background: var(--tile); font-size: 1.5rem; font-weight: 700;
+  }
+  .pad button.active { background: var(--rinse); color: var(--surface); border-color: var(--rinse); }
+  .pad .stop { background: var(--warn); color: #fff; border-color: var(--warn); font-size: 1rem; }
+  .hint { font-size: 0.85rem; color: var(--ink-soft); margin: 0 0 14px; text-align: center; }
+  kbd { font-family: inherit; font-weight: 700; border: 1.5px solid var(--grout); border-radius: 5px; padding: 0 5px; }
+
+  .slider { display: grid; grid-template-columns: 1fr auto; gap: 4px 10px; margin-top: 12px; font-size: 0.95rem; }
+  .slider input { grid-column: 1 / -1; width: 100%; accent-color: var(--rinse); }
+  .slider output { font-variant-numeric: tabular-nums; color: var(--ink-soft); }
+
+  /* Sensors */
+  .sense { grid-area: sense; }
+  .reading { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 6px; }
+  .reading strong { font-size: 1.4rem; font-variant-numeric: tabular-nums; }
+  .meter { height: 14px; border-radius: 7px; background: var(--tile); border: 2px solid var(--grout); overflow: hidden; }
+  .meter span { display: block; height: 100%; width: 0; background: var(--rinse); transition: width 0.2s linear; }
+  .meter.close span { background: var(--warn); }
+  .line { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 18px; }
+  .line div {
+    border: 2px solid var(--grout); border-radius: 8px; padding: 8px; text-align: center;
+    font-size: 0.85rem; color: var(--ink-soft);
+  }
+  .line b { display: block; font-size: 1.1rem; color: var(--ink); font-variant-numeric: tabular-nums; }
+
+  /* Shower: the one loud element */
+  .shower { grid-area: shower; display: flex; flex-direction: column; gap: 14px; }
+  .soap {
+    width: 100%; min-height: 120px; border: none; border-radius: 60px;
+    background:
+      radial-gradient(circle at 18% 30%, rgba(255,255,255,0.7) 0 9px, transparent 10px),
+      radial-gradient(circle at 26% 62%, rgba(255,255,255,0.55) 0 5px, transparent 6px),
+      radial-gradient(circle at 84% 38%, rgba(255,255,255,0.6) 0 7px, transparent 8px),
+      var(--soap);
+    color: var(--soap-ink); font-size: 1.6rem; font-weight: 800; letter-spacing: -0.01em;
+    box-shadow: inset 0 -8px 0 rgba(90, 30, 43, 0.15);
+    transition: transform 0.08s;
+  }
+  .soap:active { transform: scale(0.98); }
+  .soap.said { animation: lather 0.6s ease-out; }
+  @keyframes lather { 0% { transform: scale(1); } 30% { transform: scale(1.04); } 100% { transform: scale(1); } }
+
+  .field label { display: block; font-size: 0.9rem; margin-bottom: 4px; }
+  .field input[type="text"] {
+    width: 100%; padding: 10px 12px; font: inherit; color: var(--ink);
+    background: var(--tile); border: 2px solid var(--grout); border-radius: 8px;
+  }
+  .auto { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 0.95rem; }
+  .auto input[type="checkbox"] { width: 20px; height: 20px; accent-color: var(--rinse); }
+  .auto input[type="number"] {
+    width: 64px; padding: 4px 6px; font: inherit; color: var(--ink);
+    background: var(--tile); border: 2px solid var(--grout); border-radius: 6px;
+  }
+  .said-line { font-size: 0.9rem; color: var(--ink-soft); min-height: 1.3em; margin: 0; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .soap.said { animation: none; }
+    .meter span { transition: none; }
+  }
+</style>
+</head>
+<body>
+<main class="app">
+  <header>
+    <h1>ShowerBot</h1>
+    <span class="status" id="status" data-s="wait" role="status"><span class="dot"></span><span id="status-text">Starting…</span></span>
+  </header>
+
+  <section class="panel cam" aria-label="Camera">
+    <div class="cam-frame" id="cam-frame">
+      <img id="cam" alt="Live view from the car's camera">
+      <div class="cam-msg">
+        <p>No video from the car. Check that the shield switch is on "cam", the laptop is on the ELEGOO WiFi, and the Elegoo phone app is closed (the camera serves one viewer at a time).</p>
+      </div>
+    </div>
+    <div class="cam-bar">
+      <span id="cam-url"></span>
+      <button class="ghost" id="cam-reload">Reload video</button>
+    </div>
+  </section>
+
+  <section class="panel drive" aria-label="Driving">
+    <h2>Drive</h2>
+    <div class="pad" id="pad">
+      <button data-dir="forward_left" aria-label="Forward left">↖</button>
+      <button data-dir="forward" aria-label="Forward">↑</button>
+      <button data-dir="forward_right" aria-label="Forward right">↗</button>
+      <button data-dir="left" aria-label="Turn left">←</button>
+      <button class="stop" id="stop-btn">Stop</button>
+      <button data-dir="right" aria-label="Turn right">→</button>
+      <button data-dir="back_left" aria-label="Back left">↙</button>
+      <button data-dir="back" aria-label="Back">↓</button>
+      <button data-dir="back_right" aria-label="Back right">↘</button>
+    </div>
+    <p class="hint">Hold a direction, or use <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> / arrow keys. <kbd>Space</kbd> stops.</p>
+    <div class="slider">
+      <label for="speed">Speed</label><output id="speed-out">150</output>
+      <input type="range" id="speed" min="60" max="255" value="150">
+    </div>
+    <div class="slider">
+      <label for="pan">Sensor direction</label><output id="pan-out">90°</output>
+      <input type="range" id="pan" min="0" max="180" value="90">
+    </div>
+  </section>
+
+  <section class="panel sense" aria-label="Sensors">
+    <h2>Sensors</h2>
+    <div class="reading"><span>Nearest object</span><strong id="dist">—</strong></div>
+    <div class="meter" id="meter"><span id="meter-fill"></span></div>
+    <div class="line" aria-label="Floor sensors">
+      <div>Left<b id="l0">—</b></div>
+      <div>Middle<b id="l1">—</b></div>
+      <div>Right<b id="l2">—</b></div>
+    </div>
+  </section>
+
+  <section class="panel shower" aria-label="Shower reminders">
+    <button class="soap" id="soap">Tell them to shower</button>
+    <div class="field">
+      <label for="phrase">What to say (leave blank for a random line)</label>
+      <input type="text" id="phrase" placeholder="Hey you. Shower time.">
+    </div>
+    <div class="auto">
+      <input type="checkbox" id="auto">
+      <label for="auto">Remind automatically when someone is within</label>
+      <input type="number" id="auto-cm" value="40" min="5" max="200" aria-label="Distance in centimeters">
+      <span>cm</span>
+    </div>
+    <p class="said-line" id="said" aria-live="polite"></p>
+  </section>
+</main>
+
+<script>
+  // The ESP32 camera's MJPEG stream. If yours differs, try http://192.168.4.1/capture for single frames.
+  const STREAM_URL = "http://192.168.4.1:81/stream";
+
+  const PHRASES = [
+    "Hi there. This is your friendly reminder to take a shower.",
+    "Beep boop. Shower status: overdue.",
+    "Hydration is important. Try it on the outside too.",
+    "Fresh looks good on you. Go take a shower.",
+    "Hackathon tip: a shower is a free reboot.",
+    "I have no nose, and I can still tell. Shower time.",
+  ];
+  const AUTO_COOLDOWN_MS = 12000;
+
+  const $ = (id) => document.getElementById(id);
+
+  /* ---------- Bridge connection ---------- */
+  let ws = null;
+  function setStatus(kind, text) {
+    $("status").dataset.s = kind;
+    $("status-text").textContent = text;
+  }
+  function connect() {
+    ws = new WebSocket(`ws://${location.host}/ws`);
+    ws.onopen = () => setStatus("wait", "Looking for the car…");
+    ws.onmessage = (e) => {
+      const msg = JSON.parse(e.data);
+      if (msg.type === "state") render(msg);
+    };
+    ws.onclose = () => {
+      setStatus("bad", "Bridge offline. Is bridge.py running?");
+      setTimeout(connect, 1500);
+    };
+  }
+  function send(obj) {
+    if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj));
+  }
+
+  /* ---------- Camera ---------- */
+  function loadCamera() {
+    $("cam-frame").classList.remove("error");
+    $("cam").src = `${STREAM_URL}?t=${Date.now()}`;
+  }
+  $("cam").addEventListener("error", () => $("cam-frame").classList.add("error"));
+  $("cam-reload").addEventListener("click", loadCamera);
+  $("cam-url").textContent = STREAM_URL;
+
+  /* ---------- Driving ---------- */
+  // While a direction is held we resend it every 150 ms. The bridge stops the car
+  // if updates stop arriving, so a dropped connection never leaves it driving.
+  let heldDir = null;
+  let driveTimer = null;
+
+  function highlight() {
+    document.querySelectorAll("#pad [data-dir]").forEach((b) =>
+      b.classList.toggle("active", b.dataset.dir === heldDir));
+  }
+  function driveTick() {
+    if (heldDir) send({ type: "drive", dir: heldDir, speed: +$("speed").value });
+  }
+  function startDrive(dir) {
+    if (heldDir === dir) return;
+    heldDir = dir;
+    driveTick();
+    clearInterval(driveTimer);
+    driveTimer = setInterval(driveTick, 150);
+    highlight();
+  }
+  function stopDrive() {
+    heldDir = null;
+    clearInterval(driveTimer);
+    driveTimer = null;
+    send({ type: "stop" });
+    highlight();
+  }
+
+  document.querySelectorAll("#pad [data-dir]").forEach((btn) => {
+    btn.addEventListener("pointerdown", (e) => {
+      btn.setPointerCapture(e.pointerId);
+      startDrive(btn.dataset.dir);
+    });
+    ["pointerup", "pointercancel", "lostpointercapture"].forEach((ev) =>
+      btn.addEventListener(ev, () => { if (heldDir === btn.dataset.dir) stopDrive(); }));
+  });
+  $("stop-btn").addEventListener("click", () => { keys.clear(); stopDrive(); });
+
+  const KEYMAP = {
+    ArrowUp: "u", KeyW: "u", ArrowDown: "d", KeyS: "d",
+    ArrowLeft: "l", KeyA: "l", ArrowRight: "r", KeyD: "r",
+  };
+  const keys = new Set();
+  function applyKeys() {
+    const u = keys.has("u") && !keys.has("d");
+    const d = keys.has("d") && !keys.has("u");
+    const l = keys.has("l") && !keys.has("r");
+    const r = keys.has("r") && !keys.has("l");
+    let dir = null;
+    if (u) dir = l ? "forward_left" : r ? "forward_right" : "forward";
+    else if (d) dir = l ? "back_left" : r ? "back_right" : "back";
+    else if (l) dir = "left";
+    else if (r) dir = "right";
+    if (dir) startDrive(dir);
+    else if (heldDir) stopDrive();
+  }
+  const typing = (el) => el.matches("input[type=text], input[type=number]");
+  document.addEventListener("keydown", (e) => {
+    if (typing(e.target)) return;
+    if (e.code === "Space") { e.preventDefault(); keys.clear(); stopDrive(); return; }
+    const k = KEYMAP[e.code];
+    if (!k) return;
+    e.preventDefault();
+    keys.add(k);
+    applyKeys();
+  });
+  document.addEventListener("keyup", (e) => {
+    const k = KEYMAP[e.code];
+    if (!k) return;
+    keys.delete(k);
+    applyKeys();
+  });
+  window.addEventListener("blur", () => { keys.clear(); if (heldDir) stopDrive(); });
+
+  $("speed").addEventListener("input", () => { $("speed-out").textContent = $("speed").value; });
+
+  let panTimer = null;
+  $("pan").addEventListener("input", () => {
+    $("pan-out").textContent = `${$("pan").value}°`;
+    clearTimeout(panTimer);
+    panTimer = setTimeout(() => send({ type: "pan", angle: +$("pan").value }), 80);
+  });
+
+  /* ---------- Sensors ---------- */
+  function render(s) {
+    if (s.connected) setStatus("ok", "Car connected");
+    else setStatus("wait", "Looking for the car…");
+
+    const d = s.distance;
+    const valid = typeof d === "number" && d > 0;
+    $("dist").textContent = valid ? `${d} cm` : "—";
+    // Fuller bar = closer object. 150 cm or more reads as empty.
+    const closeness = valid ? Math.max(0, Math.min(1, 1 - d / 150)) : 0;
+    $("meter-fill").style.width = `${closeness * 100}%`;
+    const threshold = +$("auto-cm").value || 40;
+    $("meter").classList.toggle("close", valid && d <= threshold);
+
+    s.line.forEach((v, i) => { $(`l${i}`).textContent = v ?? "—"; });
+
+    if ($("auto").checked && valid && d <= threshold && Date.now() - lastSpoken > AUTO_COOLDOWN_MS) {
+      sayShower();
+    }
+  }
+
+  /* ---------- Shower reminders (spoken by the laptop) ---------- */
+  let lastSpoken = 0;
+  function sayShower() {
+    const custom = $("phrase").value.trim();
+    const text = custom || PHRASES[Math.floor(Math.random() * PHRASES.length)];
+    lastSpoken = Date.now();
+    $("said").textContent = `Said: "${text}"`;
+    if ("speechSynthesis" in window) {
+      speechSynthesis.cancel();
+      const u = new SpeechSynthesisUtterance(text);
+      u.pitch = 1.1;
+      speechSynthesis.speak(u);
+    } else {
+      $("said").textContent = "This browser can't speak aloud. Try Chrome, Edge, or Safari.";
+    }
+    const btn = $("soap");
+    btn.classList.remove("said");
+    void btn.offsetWidth;
+    btn.classList.add("said");
+  }
+  $("soap").addEventListener("click", sayShower);
+
+  connect();
+  loadCamera();
+</script>
+</body>
+</html>

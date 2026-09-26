@@ -1,2 +1,2 @@
-# stankoverflow
+# Lightning McShower
 ShowerHacks 
