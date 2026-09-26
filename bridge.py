@@ -29,6 +29,7 @@ from pathlib import Path
 
 from aiohttp import WSMsgType, web
 
+import faces as faces_mod
 import nose as nose_mod
 import reactor as reactor_mod
 import vision as vision_mod
@@ -309,9 +310,21 @@ def safe_name(name):
     return candidate
 
 
-def make_app(car, bot, hub, source):
+def make_app(car, bot, hub, source, board):
     async def index(request):
         return web.FileResponse(HERE / "dashboard.html")
+
+    async def leaderboard_page(request):
+        return web.FileResponse(HERE / "leaderboard.html")
+
+    async def leaderboard_list(request):
+        return web.json_response(board.ranked())
+
+    async def leaderboard_delete(request):
+        if not board.delete(request.match_info["id"]):
+            return web.json_response({"error": "no such entry"}, status=404)
+        hub.event({"type": "leaderboard", "entries": board.ranked()})
+        return web.json_response({"ok": True})
 
     async def stream(request):
         """Re-serve the camera as MJPEG, annotated, to as many viewers as we like."""
@@ -406,6 +419,8 @@ def make_app(car, bot, hub, source):
         return web.json_response({"saved": saved, "skipped": skipped, "clips": list_clips()})
 
     async def start(app):
+        board.load()
+        print(f"Leaderboard loaded: {len(board.entries)} people")
         app["tasks"] = [
             asyncio.create_task(hub.broadcast_loop()),
             asyncio.create_task(car.run()),
@@ -426,6 +441,11 @@ def make_app(car, bot, hub, source):
     app.router.add_get("/api/clips", clips_list)
     app.router.add_post("/api/clips", clips_upload)
     app.router.add_static("/clips/", CLIPS_DIR)
+    app.router.add_get("/leaderboard", leaderboard_page)
+    app.router.add_get("/api/leaderboard", leaderboard_list)
+    app.router.add_delete("/api/leaderboard/{id}", leaderboard_delete)
+    faces_mod.CAPTURES_DIR.mkdir(exist_ok=True)
+    app.router.add_static("/captures/", faces_mod.CAPTURES_DIR)
     app.router.add_post("/smell", smell_push)
     app.on_startup.append(start)
     app.on_cleanup.append(stop)
@@ -448,6 +468,8 @@ def main():
     parser.add_argument("--smell", choices=["fake", "serial", "http"], default="fake")
     parser.add_argument("--serial-port", default=None)
     parser.add_argument("--no-audio", action="store_true")
+    parser.add_argument("--no-capture", action="store_true",
+                        help="don't photograph faces for the leaderboard")
     args = parser.parse_args()
 
     use_yolo, why = vision_mod.probe(not args.no_vision)
@@ -464,12 +486,26 @@ def main():
 
     bot = ShowerBot(hub, vis, nose, reactor, voice)
     vis.on_update = bot.on_vision
+
+    board = faces_mod.Leaderboard()
+    capture_on, why = faces_mod.probe(use_yolo and not args.no_capture, args.model)
+    if not use_yolo and not args.no_capture:
+        why = "needs person detection"
+    print(f"Face capture: {'on' if capture_on else 'OFF -- ' + why}")
+    if capture_on:
+        capturer = faces_mod.Capturer(
+            faces_mod.FaceEmbedder(), board,
+            score_fn=lambda: hub.state["smell"]["score"],
+            on_change=lambda rows: hub.event({"type": "leaderboard", "entries": rows}),
+        )
+        vis.on_frame = capturer.on_frame
     nose.on_update = bot.on_smell
     bot.nose = nose
     hub.update(smell=nose.snapshot())
 
     print(f"Dashboard: http://localhost:{args.port}")
-    web.run_app(make_app(car, bot, hub, source),
+    print(f"Leaderboard: http://localhost:{args.port}/leaderboard")
+    web.run_app(make_app(car, bot, hub, source, board),
                 host=args.bind, port=args.port, print=None)
 
 

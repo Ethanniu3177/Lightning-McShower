@@ -40,7 +40,9 @@ With the car:
     reactor.py      the gate: person AND stink, cooldown, escalating tiers
     voice.py        plays cached clips with afplay, falls back to `say`
     lines.py        what it says, in three tiers of rudeness
+    faces.py        face capture, re-identification, the leaderboard
     dashboard.html  the UI, still one file with zero external requests
+    leaderboard.html  the Hall of Stench, same rules
 
 The bridge takes the camera because the ESP32-CAM only serves **one viewer at a
 time** — that is why `dashboard.html` now points at `/stream` instead of straight
@@ -49,6 +51,23 @@ at `192.168.4.1:81`. Nice side effect: the whole team can watch at once.
 ElevenLabs is pre-rendered to `audio/` by `tools/gen_voices.py` rather than called
 live, because the laptop has no internet while it is on the car's access point.
 Hand-recorded clips can go in `audio/manifest.json` too.
+
+## The leaderboard
+
+`http://localhost:8080/leaderboard` ranks everyone who opted in by the worst smell
+they were ever caught in. When YOLO sees a person, `faces.py` looks for a face in
+their box and fingerprints it (OpenCV YuNet + SFace), all on the laptop.
+
+**Nobody joins without saying yes.** A new face waits in memory, never on disk,
+until that person raises a hand above their head for about a second (YOLO pose finds
+their wrists and nose). If they don't, the face and photo are forgotten 30 s after
+they leave. Once someone has joined, a known face bumps their score, and their photo
+is swapped only when they hit a new peak. No visible face means no photo, which keeps
+chins and torsos off the board.
+
+The board lives in `captures/` (gitignored: it's people's faces) and survives
+restarts. Changed their mind? Hover their photo and hit ✕. `--no-capture` turns the
+whole thing off. `tools/setup.sh` fetches all three models.
 
 ## Smell sensor wiring
 

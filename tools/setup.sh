@@ -12,21 +12,34 @@ PY="${PYTHON:-python3}"
 echo "==> Installing Python dependencies (ultralytics pulls PyTorch, >1 GB)"
 "$PY" -m pip install -r requirements.txt
 
-echo "==> Fetching YOLO weights into models/"
+echo "==> Fetching YOLO pose weights into models/ (people + raise-a-hand consent)"
 mkdir -p models
-WEIGHTS="models/yolo11n.pt"
-if [ -f "$WEIGHTS" ]; then
-  echo "    already have $WEIGHTS"
+POSE="models/yolo11n-pose.pt"
+if [ -f "$POSE" ]; then
+  echo "    already have $POSE"
 else
-  curl -fL --progress-bar -o "$WEIGHTS" \
-    https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo11n.pt
+  curl -fL --progress-bar -o "$POSE" \
+    https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo11n-pose.pt
 fi
+
+echo "==> Fetching face models into models/ (leaderboard photos + re-identification)"
+ZOO="https://github.com/opencv/opencv_zoo/raw/main/models"
+for pair in \
+  "face_detection_yunet/face_detection_yunet_2023mar.onnx" \
+  "face_recognition_sface/face_recognition_sface_2021dec.onnx"; do
+  f="models/$(basename "$pair")"
+  if [ -f "$f" ]; then
+    echo "    already have $f"
+  else
+    curl -fL --progress-bar -o "$f" "$ZOO/$pair"
+  fi
+done
 
 echo "==> Warming the model (first load builds caches)"
 "$PY" - <<'PYCHECK'
 from ultralytics import YOLO
 import numpy as np
-m = YOLO("models/yolo11n.pt")
+m = YOLO("models/yolo11n-pose.pt")
 m.predict(np.zeros((320, 320, 3), dtype="uint8"), imgsz=320, verbose=False)
 print("    YOLO loads and runs.")
 PYCHECK

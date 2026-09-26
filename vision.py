@@ -25,7 +25,9 @@ from pathlib import Path
 import aiohttp
 
 HERE = Path(__file__).parent
-DEFAULT_MODEL = HERE / "models" / "yolo11n.pt"
+# The pose model is person-only and returns keypoints with every box, so one
+# model serves both presence (here) and raise-a-hand consent (faces.py).
+DEFAULT_MODEL = HERE / "models" / "yolo11n-pose.pt"
 
 CAMERA_URL = "http://192.168.4.1:81/stream"
 
@@ -51,7 +53,11 @@ BOUNDARY = "showerbotframe"
 
 
 class PersonDetector:
-    """Ultralytics YOLO, person class only. Loaded lazily so import never blocks."""
+    """Ultralytics YOLO pose, people only. Loaded lazily so import never blocks.
+
+    Only ever one predict() in flight: PyTorch's MPS backend is not thread-safe,
+    and two concurrent passes abort the process with a Metal assertion.
+    """
 
     def __init__(self, model_path=DEFAULT_MODEL):
         self.model_path = Path(model_path)
@@ -77,7 +83,7 @@ class PersonDetector:
         except Exception:
             pass
 
-        # Prefer the vendored weights. Bare "yolo11n.pt" makes ultralytics download,
+        # Prefer the vendored weights. Bare "yolo11n-pose.pt" makes ultralytics download,
         # which works at home and fails on stage -- run tools/setup.sh first.
         target = self.model_path if self.model_path.exists() else self.model_path.name
         if not self.model_path.exists():
@@ -87,30 +93,42 @@ class PersonDetector:
         print(f"vision: YOLO ready on {self.device}")
 
     def detect(self, frame):
-        """Blocking. Returns [(x1, y1, x2, y2, conf), ...]. Runs in a worker thread."""
+        """Blocking. Runs in a worker thread.
+
+        Returns (boxes, keypoints): boxes are [(x1, y1, x2, y2, conf), ...] and
+        keypoints[i] is box i's (xy (17, 2), conf (17,)) COCO arrays, or None if
+        the model has no pose head.
+        """
         if self.model is None:
             self.load()
         results = self.model.predict(
             frame, imgsz=INFER_SIZE, conf=CONF, classes=[PERSON_CLASS],
             device=self.device, verbose=False,
         )
-        boxes = []
+        boxes, keypoints = [], []
         for r in results:
-            for b in r.boxes:
+            kp = r.keypoints
+            xys = kp.xy.cpu().numpy() if kp is not None else None
+            kconfs = kp.conf.cpu().numpy() if kp is not None and kp.conf is not None else None
+            for i, b in enumerate(r.boxes):
                 x1, y1, x2, y2 = (float(v) for v in b.xyxy[0])
                 boxes.append((x1, y1, x2, y2, float(b.conf[0])))
-        return boxes
+                keypoints.append((xys[i], kconfs[i]) if kconfs is not None else None)
+        return boxes, keypoints
 
 
 class Vision:
     """Owns the camera, publishes annotated frames, reports who is in view."""
 
     def __init__(self, camera_url=CAMERA_URL, camera_index=None,
-                 enabled=True, model_path=DEFAULT_MODEL, on_update=None):
+                 enabled=True, model_path=DEFAULT_MODEL, on_update=None, on_frame=None):
         self.camera_url = camera_url
         self.camera_index = camera_index
         self.enabled = enabled
         self.on_update = on_update or (lambda *_: None)
+        # Raw (unannotated) frame, boxes and keypoints after every YOLO pass;
+        # faces.py takes photos and reads raised hands from it.
+        self.on_frame = on_frame or (lambda *_: None)
         self.detector = PersonDetector(model_path) if enabled else None
 
         self.latest = b""
@@ -295,13 +313,14 @@ class Vision:
 
     async def _infer(self, frame):
         try:
-            boxes = await asyncio.to_thread(self.detector.detect, frame)
+            boxes, keypoints = await asyncio.to_thread(self.detector.detect, frame)
         except Exception as e:
             print(f"vision: detection failed, continuing without it ({e!r})")
             self.enabled = False
             self.on_update(self.snapshot())
             return
         self._note_detection(boxes)
+        self.on_frame(frame, boxes, keypoints)
 
     def _draw(self, cv2, frame):
         for (x1, y1, x2, y2, conf) in self.boxes:

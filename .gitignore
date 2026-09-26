@@ -15,3 +15,6 @@ audio/*.aiff
 !audio/manifest.json
 
 .DS_Store
+
+# Leaderboard photos + face fingerprints. These are people's faces: never commit them.
+captures/

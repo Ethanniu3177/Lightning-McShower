@@ -214,6 +214,9 @@
     padding: 7px 16px; border-radius: 999px; font-weight: 600; font-size: 0.92rem;
     box-shadow: 0 6px 18px rgba(0,0,0,0.25);
   }
+  .head-actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  a.status { color: var(--ink); text-decoration: none; }
+  a.status:hover { border-color: var(--brass); }
   .status .dot { position: relative; width: 10px; height: 10px; border-radius: 50%; background: #B9BDC6; }
   .status[data-s="ok"] .dot { background: var(--sage-deep); }
   .status[data-s="ok"] .dot::after {
@@ -529,7 +532,10 @@
       <ellipse cx="45" cy="110" rx="27" ry="4" fill="#FFF6DD"/>
       <ellipse cx="45" cy="112" rx="45" ry="58" fill="url(#glow)"/>
     </svg>
-    <span class="status" id="status" data-s="wait" role="status"><span class="dot"></span><span id="status-text">Starting…</span></span>
+    <div class="head-actions">
+      <a class="status" href="/leaderboard">Leaderboard →</a>
+      <span class="status" id="status" data-s="wait" role="status"><span class="dot"></span><span id="status-text">Starting…</span></span>
+    </div>
   </header>
 
   <section class="panel cam" aria-label="Camera">
