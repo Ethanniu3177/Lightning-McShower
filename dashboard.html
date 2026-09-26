@@ -56,12 +56,13 @@
     grid-template-areas:
       "head   head"
       "cam    drive"
+      "nose   shower"
       "sense  shower";
   }
   @media (max-width: 860px) {
     .app {
       grid-template-columns: 1fr;
-      grid-template-areas: "head" "cam" "shower" "drive" "sense";
+      grid-template-areas: "head" "cam" "nose" "shower" "drive" "sense";
     }
   }
 
@@ -83,7 +84,8 @@
   /* Camera */
   .cam { grid-area: cam; padding: 0; overflow: hidden; display: flex; flex-direction: column; }
   .cam-frame { position: relative; aspect-ratio: 4 / 3; background: #06181D; }
-  .cam-frame img { width: 100%; height: 100%; object-fit: contain; display: block; }
+  /* Absolute, so the frame keeps its 4/3 box whatever resolution the camera sends. */
+  .cam-frame img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; display: block; }
   .cam-msg {
     position: absolute; inset: 0; display: none; place-content: center; text-align: center;
     padding: 24px; color: #D6E8EB; font-size: 0.95rem;
@@ -160,6 +162,7 @@
   }
   .said-line { font-size: 0.9rem; color: var(--ink-soft); min-height: 1.3em; margin: 0; }
 
+<<<<<<< Updated upstream
   .voice { border: none; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 0.95rem; }
   .voice legend { font-weight: 700; padding: 0; margin-bottom: 6px; }
   .voice input { accent-color: var(--rinse); }
@@ -177,6 +180,35 @@
   .drop-hint { font-size: 0.85rem; color: var(--ink-soft); margin: 8px 0 0; }
   body.dragging .shower { border-color: var(--rinse); border-style: dashed; }
   #phrase-field[hidden] { display: none; }
+=======
+  /* Nose */
+  .nose { grid-area: nose; }
+  .nose .meter span { background: var(--rinse); }
+  .nose .meter.stinky span { background: var(--warn); }
+  .verdict { font-size: 1.4rem; font-weight: 800; letter-spacing: -0.01em; }
+  .verdict[data-s="warming"] { color: var(--ink-soft); }
+  .verdict[data-s="fresh"] { color: var(--rinse); }
+  .verdict[data-s="sus"] { color: var(--soap-ink); }
+  .verdict[data-s="foul"] { color: var(--warn); }
+  .raw { font-size: 0.85rem; color: var(--ink-soft); margin: 10px 0 0; font-variant-numeric: tabular-nums; }
+  .nose-actions { display: flex; gap: 8px; margin-top: 14px; flex-wrap: wrap; }
+
+  /* Camera overlay badge */
+  .badge {
+    position: absolute; top: 10px; left: 10px; z-index: 1;
+    background: rgba(6, 24, 29, 0.78); color: #D6E8EB;
+    border-radius: 999px; padding: 4px 12px; font-size: 0.85rem; font-weight: 700;
+  }
+  .badge[data-on="yes"] { background: var(--rinse); color: #06181D; }
+
+  /* Reaction log */
+  .log { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; font-size: 0.85rem; }
+  .log li { border-left: 3px solid var(--grout); padding: 2px 0 2px 10px; color: var(--ink-soft); }
+  .log li b { color: var(--ink); font-weight: 600; }
+  .log time { font-variant-numeric: tabular-nums; }
+  .log .t-rude { border-left-color: var(--soap); }
+  .log .t-savage { border-left-color: var(--warn); }
+>>>>>>> Stashed changes
 
   @media (prefers-reduced-motion: reduce) {
     .soap.said { animation: none; }
@@ -193,9 +225,10 @@
 
   <section class="panel cam" aria-label="Camera">
     <div class="cam-frame" id="cam-frame">
-      <img id="cam" alt="Live view from the car's camera">
+      <span class="badge" id="badge" data-on="no">Looking…</span>
+      <img id="cam" alt="Live view from the car's camera, with detected people boxed">
       <div class="cam-msg">
-        <p>No video from the car. Check that the shield switch is on "cam", the laptop is on the ELEGOO WiFi, and the Elegoo phone app is closed (the camera serves one viewer at a time).</p>
+        <p>No video. The bridge owns the camera now, so check that bridge.py is running, the shield switch is on "cam", the laptop is on the ELEGOO WiFi, and the Elegoo phone app is closed.</p>
       </div>
     </div>
     <div class="cam-bar">
@@ -242,6 +275,17 @@
     </div>
   </section>
 
+  <section class="panel nose" aria-label="Smell sensor">
+    <h2>Nose</h2>
+    <div class="reading"><span id="verdict-label">Air quality</span><strong class="verdict" id="verdict" data-s="warming">—</strong></div>
+    <div class="meter" id="stink-meter"><span id="stink-fill"></span></div>
+    <p class="raw" id="stink-raw">Waiting for the sensor…</p>
+    <div class="nose-actions">
+      <button class="ghost" id="stink-test">Trigger stink</button>
+      <button class="ghost" id="stink-cal">Recalibrate</button>
+    </div>
+  </section>
+
   <section class="panel shower" aria-label="Shower reminders">
     <button class="soap" id="soap">Tell them to shower</button>
 
@@ -265,28 +309,22 @@
       <input type="text" id="phrase" placeholder="Hey you. Shower time.">
     </div>
     <div class="auto">
-      <input type="checkbox" id="auto">
-      <label for="auto">Remind automatically when someone is within</label>
-      <input type="number" id="auto-cm" value="40" min="5" max="200" aria-label="Distance in centimeters">
-      <span>cm</span>
+      <input type="checkbox" id="mute">
+      <label for="mute">Mute the robot (it keeps sensing, it just shuts up)</label>
     </div>
     <p class="said-line" id="said" aria-live="polite"></p>
+    <ul class="log" id="log" aria-label="Recent reactions"></ul>
   </section>
 </main>
 
 <script>
-  // The ESP32 camera's MJPEG stream. If yours differs, try http://192.168.4.1/capture for single frames.
-  const STREAM_URL = "http://192.168.4.1:81/stream";
+  // The bridge owns the ESP32 camera now and re-serves it annotated with YOLO
+  // boxes, which is also why more than one person can watch at a time.
+  const STREAM_URL = `${location.origin}/stream`;
 
-  const PHRASES = [
-    "Hi there. This is your friendly reminder to take a shower.",
-    "Beep boop. Shower status: overdue.",
-    "Hydration is important. Try it on the outside too.",
-    "Fresh looks good on you. Go take a shower.",
-    "Hackathon tip: a shower is a free reboot.",
-    "I have no nose, and I can still tell. Shower time.",
-  ];
-  const AUTO_COOLDOWN_MS = 12000;
+  // Distance at which the meter turns red. Purely cosmetic: the decision to
+  // speak lives in reactor.py, gated on smell AND a person in frame.
+  const CLOSE_CM = 40;
 
   const $ = (id) => document.getElementById(id);
 
@@ -302,6 +340,8 @@
     ws.onmessage = (e) => {
       const msg = JSON.parse(e.data);
       if (msg.type === "state") render(msg);
+      else if (msg.type === "reaction") onReaction(msg);
+      else if (msg.type === "spoken") onSpoken(msg);
     };
     ws.onclose = () => {
       setStatus("bad", "Bridge offline. Is bridge.py running?");
@@ -319,7 +359,7 @@
   }
   $("cam").addEventListener("error", () => $("cam-frame").classList.add("error"));
   $("cam-reload").addEventListener("click", loadCamera);
-  $("cam-url").textContent = STREAM_URL;
+  $("cam-url").textContent = "via bridge → 192.168.4.1:81";
 
   /* ---------- Driving ---------- */
   // While a direction is held we resend it every 150 ms. The bridge stops the car
@@ -439,16 +479,23 @@
     // Fuller bar = closer object. 150 cm or more reads as empty.
     const closeness = valid ? Math.max(0, Math.min(1, 1 - d / 150)) : 0;
     $("meter-fill").style.width = `${closeness * 100}%`;
-    const threshold = +$("auto-cm").value || 40;
-    $("meter").classList.toggle("close", valid && d <= threshold);
+    $("meter").classList.toggle("close", valid && d <= CLOSE_CM);
 
     s.line.forEach((v, i) => { $(`l${i}`).textContent = v ?? "—"; });
 
-    if ($("auto").checked && valid && d <= threshold && Date.now() - lastSpoken > AUTO_COOLDOWN_MS) {
-      sayShower();
+    renderVision(s);
+    renderNose(s.smell || {});
+    if ($("mute").checked !== !!s.muted) $("mute").checked = !!s.muted;
+
+    // A dashboard opened after the fact should still show the last thing said,
+    // rather than looking like the robot has never spoken.
+    if (s.last_reaction && s.last_reaction.at !== shownAt) {
+      shownAt = s.last_reaction.at;
+      if (!$("log").children.length) onReaction(s.last_reaction);
     }
   }
 
+<<<<<<< Updated upstream
   /* ---------- Shower reminders (spoken by the laptop) ---------- */
   let lastSpoken = 0;
   let clips = [];
@@ -461,12 +508,70 @@
     r.addEventListener("change", () => { $("phrase-field").hidden = voiceMode() !== "tts"; }));
 
   function lather() {
+=======
+  function renderVision(s) {
+    const badge = $("badge");
+    const v = s.vision || {};
+    if (!v.enabled) badge.textContent = "Detection off";
+    else if (!v.online) badge.textContent = "No camera";
+    else if (s.people > 0) badge.textContent = `👤 ${s.people} in frame`;
+    else badge.textContent = "Nobody in frame";
+    badge.dataset.on = s.person ? "yes" : "no";
+  }
+
+  function renderNose(n) {
+    const score = typeof n.score === "number" ? n.score : 0;
+    $("stink-fill").style.width = `${Math.max(0, Math.min(100, score))}%`;
+    $("stink-meter").classList.toggle("stinky", !!n.stinky);
+
+    const v = $("verdict");
+    if (n.warming) {
+      v.dataset.s = "warming";
+      v.textContent = "Calibrating";
+    } else if (n.stinky) {
+      v.dataset.s = "foul";
+      v.textContent = "BIOHAZARD";
+    } else if (score > 30) {
+      v.dataset.s = "sus";
+      v.textContent = "Suspicious";
+    } else {
+      v.dataset.s = "fresh";
+      v.textContent = "Fresh";
+    }
+
+    const bits = [];
+    if (n.warming) bits.push(`learning baseline, ${Math.ceil(n.warmup_left || 0)}s left`);
+    else bits.push(`score ${score.toFixed(0)}/100 · baseline ${n.baseline ?? "—"}`);
+    Object.entries(n.raw || {}).forEach(([k, val]) => bits.push(`${k} ${val}`));
+    bits.push(`source: ${n.source || "none"}`);
+    $("stink-raw").textContent = bits.join(" · ");
+  }
+
+  /* ---------- Reactions ----------
+     The server decides what to say and says it through ElevenLabs clips or the
+     Mac's `say`. We only render it -- unless the server reports it had no way to
+     make a sound, in which case the browser covers for it. */
+  let shownAt = null;
+  function onReaction(msg) {
+    shownAt = msg.at ?? shownAt;
+    $("said").textContent = `Said: "${msg.text}"`;
+    const li = document.createElement("li");
+    li.className = `t-${msg.tier}`;
+    const when = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+    li.innerHTML = `<time></time> <b></b>`;
+    li.querySelector("time").textContent = when;
+    li.querySelector("b").textContent = msg.text;
+    $("log").prepend(li);
+    while ($("log").children.length > 6) $("log").lastElementChild.remove();
+
+>>>>>>> Stashed changes
     const btn = $("soap");
     btn.classList.remove("said");
     void btn.offsetWidth;
     btn.classList.add("said");
   }
 
+<<<<<<< Updated upstream
   function markPlaying(name) {
     document.querySelectorAll("#clip-list button").forEach((b) =>
       b.classList.toggle("playing", b.dataset.name === name));
@@ -519,6 +624,27 @@
     }
   }
   $("soap").addEventListener("click", sayShower);
+=======
+  function onSpoken(msg) {
+    if (msg.backend !== "none") return;
+    if (!("speechSynthesis" in window)) {
+      $("said").textContent = "Nothing on this machine can speak. Run tools/gen_voices.py.";
+      return;
+    }
+    speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(msg.text);
+    u.pitch = 1.1;
+    speechSynthesis.speak(u);
+  }
+
+  $("soap").addEventListener("click", () =>
+    send({ type: "say_now", text: $("phrase").value.trim() }));
+  $("mute").addEventListener("change", () =>
+    send({ type: "mute", muted: $("mute").checked }));
+  $("stink-test").addEventListener("click", () =>
+    send({ type: "fake_smell", level: 90, seconds: 8 }));
+  $("stink-cal").addEventListener("click", () => send({ type: "recalibrate" }));
+>>>>>>> Stashed changes
 
   function renderClips() {
     const list = $("clip-list");

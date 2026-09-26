@@ -1,19 +1,24 @@
 """
 ShowerBot bridge for the Elegoo Smart Robot Car Kit V4.
 
-Holds the TCP connection to the car (port 100), answers the car's heartbeat,
-polls the ultrasonic and line sensors, and serves the dashboard at
-http://localhost:8080 over a WebSocket.
+Holds the TCP connection to the car (port 100), answers the car's heartbeat, polls
+the ultrasonic and line sensors, owns the camera and runs YOLO person detection on
+it, reads the smell sensor, and decides when to insult somebody.
+
+The rule the whole thing exists to enforce: speak only when the air is foul AND a
+person is in frame.
 
 Setup:
   1. Car's shield switch on "cam", car running Elegoo's stock Arduino firmware.
   2. Join the laptop to the car's ELEGOO-XXXX WiFi network.
-  3. pip install aiohttp
+  3. pip install -r requirements.txt  &&  bash tools/setup.sh
   4. python bridge.py            (or: python bridge.py --car-host 192.168.4.1)
   5. Open http://localhost:8080
 
 Audio clips: drop .m4a / .mp3 / .wav files into the "clips" folder next to this
 file, or drag them onto the dashboard. The laptop plays them.
+No car? No sensor? The whole pipeline still runs:
+     python bridge.py --camera 0 --smell fake
 """
 import argparse
 import asyncio
@@ -24,6 +29,11 @@ from pathlib import Path
 
 from aiohttp import WSMsgType, web
 
+import nose as nose_mod
+import reactor as reactor_mod
+import vision as vision_mod
+import voice as voice_mod
+
 CAR_HOST = "192.168.4.1"
 CAR_PORT = 100
 DASHBOARD_PORT = 8080
@@ -32,11 +42,17 @@ DASHBOARD_PORT = 8080
 # This is the safety net for a closed tab, a dropped WebSocket, or a stuck key.
 DRIVE_TIMEOUT = 0.5
 
+<<<<<<< HEAD
 # Pan servo (camera + ultrasonic). On this car 0° points right, so "forward" is
 # the middle. If the camera isn't straight at center, adjust PAN_CENTER (the
 # firmware moves in 10° steps; for smaller errors, re-seat the servo horn).
 PAN_CENTER = 90
 PAN_MIN, PAN_MAX = 10, 170  # the firmware clamps to this range
+=======
+# Vision pushes updates far faster than a human can read them. Coalesce state
+# broadcasts to this interval so the WebSocket is not flooded.
+BROADCAST_INTERVAL = 0.1
+>>>>>>> 9cbb2b0ff3d2833780173a6cc0fc87323f68d2b5
 
 # Stock firmware "rocker" directions (command N=102, parameter D1).
 DIRECTIONS = {
@@ -48,13 +64,65 @@ FRAME_RE = re.compile(r"\{[^{}]*\}")      # car frames are brace-delimited
 REPLY_RE = re.compile(r"^\{(\w+)_(.*)\}$")  # replies look like {<H tag>_<value>}
 
 
+class Hub:
+    """The one place state lives, and the one thing that talks to dashboards.
+
+    `update()` is deliberately synchronous so vision and nose callbacks can poke it
+    from anywhere without awaiting. Sending is done by a single coalescing loop.
+    """
+
+    def __init__(self):
+        self.clients = set()
+        self.dirty = asyncio.Event()
+        self.state = {
+            "connected": False,
+            "distance": None,
+            "line": [None, None, None],
+            "people": 0,
+            "person": False,
+            "vision": {"fps": 0.0, "online": False, "enabled": False},
+            "smell": {"score": 0.0, "stinky": False, "raw": {}, "baseline": None,
+                      "warming": True, "warmup_left": nose_mod.WARMUP_S, "source": "none"},
+            "muted": False,
+            "voice": "none",
+            "last_reaction": None,
+        }
+
+    def update(self, **changes):
+        self.state.update(changes)
+        self.dirty.set()
+
+    def event(self, payload):
+        """Fire-and-forget message outside the coalesced state stream."""
+        asyncio.create_task(self._send(json.dumps(payload)))
+
+    async def _send(self, msg):
+        for ws in list(self.clients):
+            try:
+                await ws.send_str(msg)
+            except Exception:
+                self.clients.discard(ws)
+
+    async def broadcast_loop(self):
+        while True:
+            await self.dirty.wait()
+            self.dirty.clear()
+            await self._send(json.dumps({"type": "state", **self.state}))
+            # Anything that changes during this nap rides along in the next send.
+            await asyncio.sleep(BROADCAST_INTERVAL)
+
+
 class Car:
-    def __init__(self, host, port):
+    def __init__(self, host, port, hub):
         self.host, self.port = host, port
+        self.hub = hub
         self.writer = None
         self.write_lock = asyncio.Lock()
+<<<<<<< HEAD
         self.clients = set()
         self.state = {"connected": False, "distance": None, "line": [None, None, None], "look": 0}
+=======
+>>>>>>> 9cbb2b0ff3d2833780173a6cc0fc87323f68d2b5
         self.last_drive = 0.0
         self.moving = False
 
@@ -100,8 +168,12 @@ class Car:
                     asyncio.open_connection(self.host, self.port), timeout=5
                 )
                 print("Car connected.")
+<<<<<<< HEAD
                 await self.set_state(connected=True)
                 await self.look(0)  # face forward on every (re)connect
+=======
+                self.hub.update(connected=True)
+>>>>>>> 9cbb2b0ff3d2833780173a6cc0fc87323f68d2b5
                 tasks = [
                     asyncio.create_task(self.read_loop(reader)),
                     asyncio.create_task(self.poll_loop()),
@@ -120,7 +192,7 @@ class Car:
                 self.writer.close()
             self.writer = None
             self.moving = False
-            await self.set_state(connected=False, distance=None, line=[None, None, None])
+            self.hub.update(connected=False, distance=None, line=[None, None, None])
             await asyncio.sleep(2)
 
     async def read_loop(self, reader):
@@ -147,11 +219,11 @@ class Car:
         tag, value = m.groups()
         try:
             if tag == "dist":
-                await self.set_state(distance=int(value))
+                self.hub.update(distance=int(value))
             elif tag in ("L0", "L1", "L2"):
-                line = list(self.state["line"])
+                line = list(self.hub.state["line"])
                 line[int(tag[1])] = int(value)
-                await self.set_state(line=line)
+                self.hub.update(line=line)
         except ValueError:
             pass  # e.g. {dist_ok} acknowledgements
 
@@ -172,15 +244,55 @@ class Car:
             if self.moving and time.monotonic() - self.last_drive > DRIVE_TIMEOUT:
                 await self.stop()
 
-    # ---------- dashboard updates ----------
-    async def set_state(self, **changes):
-        self.state.update(changes)
-        msg = json.dumps({"type": "state", **self.state})
-        for ws in list(self.clients):
-            try:
-                await ws.send_str(msg)
-            except Exception:
-                self.clients.discard(ws)
+
+class ShowerBot:
+    """Ties vision + nose + reactor + voice together."""
+
+    def __init__(self, hub, vis, nose, reactor, voice):
+        self.hub = hub
+        self.vision = vis
+        self.nose = nose
+        self.reactor = reactor
+        self.voice = voice
+        hub.update(voice=voice.backend, vision=vis.snapshot())
+
+    # Both callbacks are sync -- they are called from vision/nose internals.
+    def on_vision(self, snap):
+        self.hub.update(people=snap["people"], person=snap["person"], vision=snap)
+        self.evaluate()
+
+    def on_smell(self, snap):
+        self.hub.update(smell=snap)
+        self.evaluate()
+
+    def evaluate(self):
+        reaction = self.reactor.consider(
+            person=self.hub.state["person"],
+            stinky=self.hub.state["smell"]["stinky"],
+        )
+        if reaction:
+            self.speak(reaction)
+
+    def manual(self, text=None):
+        reaction = self.reactor.manual(text=text)
+        if reaction:
+            self.speak(reaction)
+
+    def speak(self, reaction):
+        payload = reaction.as_dict()
+        self.hub.update(last_reaction=payload)
+        self.hub.event({"type": "reaction", **payload})
+        asyncio.create_task(self._say(payload))
+
+    async def _say(self, payload):
+        backend = await self.voice.say(payload["text"])
+        # Tell the dashboard which backend actually made the noise -- if it says
+        # "none", the browser speaks the line itself as a last resort.
+        self.hub.event({"type": "spoken", "backend": backend, **payload})
+
+    def set_muted(self, muted):
+        self.reactor.muted = bool(muted)
+        self.hub.update(muted=self.reactor.muted)
 
 
 HERE = Path(__file__).parent
@@ -207,15 +319,50 @@ def safe_name(name):
     return candidate
 
 
-def make_app(car):
+def make_app(car, bot, hub, source):
     async def index(request):
         return web.FileResponse(HERE / "dashboard.html")
+
+    async def stream(request):
+        """Re-serve the camera as MJPEG, annotated, to as many viewers as we like."""
+        resp = web.StreamResponse(headers={
+            "Content-Type": f"multipart/x-mixed-replace; boundary={vision_mod.BOUNDARY}",
+            "Cache-Control": "no-store, no-cache, must-revalidate",
+            "Pragma": "no-cache",
+        })
+        await resp.prepare(request)
+        boundary = f"--{vision_mod.BOUNDARY}\r\n".encode()
+        try:
+            async for jpeg in bot.vision.frames():
+                await resp.write(boundary
+                                 + b"Content-Type: image/jpeg\r\n"
+                                 + f"Content-Length: {len(jpeg)}\r\n\r\n".encode()
+                                 + jpeg + b"\r\n")
+        except (ConnectionResetError, asyncio.CancelledError):
+            pass
+        except Exception as e:
+            print(f"stream: viewer dropped ({e!r})")
+        return resp
+
+    async def smell_push(request):
+        """Ingest for an ESP32 riding on the car: POST {"tvoc": 220, "eco2": 850}."""
+        if not isinstance(source, nose_mod.PushSmellSource):
+            return web.json_response({"error": "bridge not started with --smell http"},
+                                     status=409)
+        try:
+            data = await request.json()
+        except Exception:
+            return web.json_response({"error": "expected a JSON object"}, status=400)
+        if not isinstance(data, dict):
+            return web.json_response({"error": "expected a JSON object"}, status=400)
+        source.push(data)
+        return web.json_response({"ok": True})
 
     async def ws_handler(request):
         ws = web.WebSocketResponse(heartbeat=10)
         await ws.prepare(request)
-        car.clients.add(ws)
-        await ws.send_str(json.dumps({"type": "state", **car.state}))
+        hub.clients.add(ws)
+        await ws.send_str(json.dumps({"type": "state", **hub.state}))
         try:
             async for msg in ws:
                 if msg.type != WSMsgType.TEXT:
@@ -229,11 +376,28 @@ def make_app(car):
                     await car.drive(data.get("dir"), data.get("speed", 150))
                 elif kind == "stop":
                     await car.stop()
+<<<<<<< HEAD
                 elif kind == "look":
                     await car.look(data.get("offset", 0))
+=======
+                elif kind == "pan":
+                    await car.pan(data.get("angle", 90))
+                elif kind == "say_now":
+                    bot.manual(text=(data.get("text") or "").strip() or None)
+                elif kind == "mute":
+                    bot.set_muted(data.get("muted", False))
+                elif kind == "fake_smell":
+                    if isinstance(source, nose_mod.FakeSmellSource):
+                        source.spike(float(data.get("level", 90)),
+                                     float(data.get("seconds", 8)))
+                elif kind == "recalibrate":
+                    bot.nose.meter.recalibrate()
+                    hub.update(smell=bot.nose.snapshot())
+>>>>>>> 9cbb2b0ff3d2833780173a6cc0fc87323f68d2b5
         finally:
-            car.clients.discard(ws)
-            await car.stop()  # dashboard closed or dropped: stop the car
+            hub.clients.discard(ws)
+            if not hub.clients:
+                await car.stop()  # last dashboard closed: stop the car
         return ws
 
     async def clips_list(request):
@@ -258,29 +422,75 @@ def make_app(car):
 
     async def start_car(app):
         app["car_task"] = asyncio.create_task(car.run())
+    async def start(app):
+        app["tasks"] = [
+            asyncio.create_task(hub.broadcast_loop()),
+            asyncio.create_task(car.run()),
+            asyncio.create_task(bot.vision.run()),
+            asyncio.create_task(bot.nose.run()),
+        ]
 
-    async def stop_car(app):
-        app["car_task"].cancel()
+    async def stop(app):
+        for t in app["tasks"]:
+            t.cancel()
+        await bot.voice.stop()
 
     CLIPS_DIR.mkdir(exist_ok=True)
     app = web.Application(client_max_size=MAX_UPLOAD_MB * 1024 * 1024)
     app.router.add_get("/", index)
+    app.router.add_get("/stream", stream)
     app.router.add_get("/ws", ws_handler)
     app.router.add_get("/api/clips", clips_list)
     app.router.add_post("/api/clips", clips_upload)
     app.router.add_static("/clips/", CLIPS_DIR)
     app.on_startup.append(start_car)
     app.on_cleanup.append(stop_car)
+    app.router.add_post("/smell", smell_push)
+    app.on_startup.append(start)
+    app.on_cleanup.append(stop)
     return app
 
 
-if __name__ == "__main__":
+def main():
     parser = argparse.ArgumentParser(description="ShowerBot bridge")
     parser.add_argument("--car-host", default=CAR_HOST)
     parser.add_argument("--car-port", type=int, default=CAR_PORT)
     parser.add_argument("--port", type=int, default=DASHBOARD_PORT)
+    parser.add_argument("--bind", default="0.0.0.0",
+                        help="0.0.0.0 lets teammates and the car's sensor board reach us")
+    parser.add_argument("--camera-url", default=vision_mod.CAMERA_URL)
+    parser.add_argument("--camera", type=int, default=None,
+                        help="use a local webcam by index instead of the car (try 0)")
+    parser.add_argument("--no-vision", action="store_true",
+                        help="proxy the camera but skip YOLO")
+    parser.add_argument("--model", default=str(vision_mod.DEFAULT_MODEL))
+    parser.add_argument("--smell", choices=["fake", "serial", "http"], default="fake")
+    parser.add_argument("--serial-port", default=None)
+    parser.add_argument("--no-audio", action="store_true")
     args = parser.parse_args()
 
+    use_yolo, why = vision_mod.probe(not args.no_vision)
+    print(f"Vision: {'person detection on' if use_yolo else 'OFF -- ' + why}")
+
+    hub = Hub()
+    car = Car(args.car_host, args.car_port, hub)
+    vis = vision_mod.Vision(camera_url=args.camera_url, camera_index=args.camera,
+                            enabled=use_yolo, model_path=args.model)
+    source = nose_mod.make_source(args.smell, args.serial_port)
+    nose = nose_mod.Nose(source, on_update=lambda s: None)
+    voice = voice_mod.Voice(enabled=not args.no_audio)
+    reactor = reactor_mod.Reactor()
+
+    bot = ShowerBot(hub, vis, nose, reactor, voice)
+    vis.on_update = bot.on_vision
+    nose.on_update = bot.on_smell
+    bot.nose = nose
+    hub.update(smell=nose.snapshot())
+
     print(f"Dashboard: http://localhost:{args.port}")
-    web.run_app(make_app(Car(args.car_host, args.car_port)),
-                host="127.0.0.1", port=args.port, print=None)
+    web.run_app(make_app(car, bot, hub, source),
+                host=args.bind, port=args.port, print=None)
+
+
+if __name__ == "__main__":
+    main()
