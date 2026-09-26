@@ -68,18 +68,19 @@ anyone.
     python -m pytest tests/
 
 ## To build
-<<<<<<< HEAD
 
 | Task | Owner | Status |
 |---|---|---|
 | Driving model | Ricky | ⏳ |
-| Record our voices | All | ⏳ Playback + upload is built. Now we need the recordings. |
-| Add a sniff module | Scott | 🧪 stretch |
-| Output audio to speakers (Mac API) | Jake | ⏳ Clips play through the default output; speaker picker next |
-| Update dashboard to show the streaming data | Ethan | ⏳ |
+| Mock out presentation | Andrew | ⏳ |
+| Record our voices | All | ⏳ Dashboard upload is built (`clips/`). For the robot's own reactions, drop clips in `audio/` and add them to `manifest.json`. |
+| Add a sniff module | Scott | ⏳ `nose.py` is built; needs the real I2C board |
+| Output audio to speakers (Mac API) | Jake | ✅ `voice.py` (afplay + `say`); speaker picker next |
+| Update dashboard to show the streaming data | Ethan | ✅ nose panel + reaction log |
 | Figure out how to integrate sponsors | **?** | ⏳ unassigned |
 | *Potentially:* conversational AI reacting to data and speaking things out | Andrew | 🧪 stretch |
-| Vision: local YOLO → stank score | **?** | ⏳ unassigned |
+| Person detection: only speak when a person is in frame (YOLO) | | ✅ `vision.py` |
+| Vision: YOLO evidence → stank score | **?** | ⏳ unassigned |
 
 See [SPRINTS.md](docs/SPRINTS.md) for the checklists, timeline and fallback demo plan.
 
@@ -91,13 +92,15 @@ See [SPRINTS.md](docs/SPRINTS.md) for the checklists, timeline and fallback demo
 | Browser dashboard: live camera, drive pad + WASD/arrows, speed, camera pan, `Space` = stop | ✅ built | [`dashboard.html`](dashboard.html) |
 | Live ultrasonic distance + line sensors on the dashboard | ✅ built | both |
 | Safety: car stops if drive updates stop for 0.5 s or the tab closes | ✅ built | `bridge.py` |
-| "Tell them to shower" button + auto-remind when someone is within N cm | ✅ built | `dashboard.html` |
+| Auto-roast when the air is foul AND a person is in frame; "Tell them to shower" button; mute | ✅ built | `reactor.py`, `bridge.py` |
 | Recorded voice clips: drop `.m4a/.mp3/.wav` into `clips/` or drag onto the dashboard; plays a random clip with no immediate repeats; computer-voice fallback | ✅ built | both |
-| Vision: local YOLO → stank score from the camera | ⏳ planned | |
+| Person detection: local YOLO, boxes drawn on the stream | ✅ built | [`vision.py`](vision.py) |
+| Smell: fake / serial / HTTP sources, baseline + score, nose panel | ✅ built | [`nose.py`](nose.py) |
+| Vision: YOLO evidence → stank score | ⏳ planned | |
 | Speaker picker (laptop vs Bluetooth) | ⏳ planned | |
 | Moss roast matching · Zo Stank Board · Firecrawl library | ⏳ planned | |
 | Autonomous driving | ⏳ planned | |
-| Gas-sensor "sniff" (BME688) | 🧪 stretch | |
+| Real gas sensor on the car (BME688 / ENS160) | ⏳ needs hardware | `nose.py` |
 
 ## How it works (target design)
 
@@ -128,7 +131,7 @@ See [SPRINTS.md](docs/SPRINTS.md) for the checklists, timeline and fallback demo
 4. Run the bridge:
    ```bash
    python3 -m venv .venv && source .venv/bin/activate
-   pip install aiohttp
+   pip install -r requirements.txt
    python bridge.py            # or: python bridge.py --car-host 192.168.4.1 --port 8080
    ```
 5. Open **http://localhost:8080** and drive.
@@ -142,7 +145,8 @@ See [SPRINTS.md](docs/SPRINTS.md) for the checklists, timeline and fallback demo
 | **Tell them to shower** | Play a random recording (or speak a typed/random line in computer-voice mode) |
 | Reminder voice | *My recordings* or *Computer voice* |
 | Add files / drag-and-drop | Upload voice clips (saved to `clips/`). Export Voice Memos as `.m4a`. |
-| Auto-remind checkbox | Speak automatically when someone is within N cm (12 s cooldown) |
+| Mute checkbox | The robot keeps sensing but stops speaking |
+| Trigger stink / Recalibrate | Fake a smell spike (with `--smell fake`) / relearn the air baseline |
 
 **Kill switches:** `Space`/**Stop** on the dashboard, closing the tab (the bridge stops the car), or the car's **power switch**.
 
@@ -180,14 +184,3 @@ route get 1.1.1.1     | grep interface   # → the phone/Ethernet (internet)
 
 ## License
 MIT. See [LICENSE](LICENSE).
-=======
-- driving model - ricky
-- record our voices - all → drop clips in `audio/`, add them to `manifest.json`
-- add a sniff module - scott → `nose.py`, needs the real I2C board
-- output audio to speakers - mac api - jake → `voice.py` (done, afplay + `say`)
-- update dashboard to show the streaming data - ethan → nose panel + reaction log
-- person detection - only speak when a person is in frame - use yolo model → done
-- figure out how to integrate sponsors - ?
-- mock out presentation - andrew
-- potentially have conversational ai reacting to data and speaking things out - andrew
->>>>>>> 9cbb2b0ff3d2833780173a6cc0fc87323f68d2b5

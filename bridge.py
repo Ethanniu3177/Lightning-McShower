@@ -42,17 +42,15 @@ DASHBOARD_PORT = 8080
 # This is the safety net for a closed tab, a dropped WebSocket, or a stuck key.
 DRIVE_TIMEOUT = 0.5
 
-<<<<<<< HEAD
 # Pan servo (camera + ultrasonic). On this car 0° points right, so "forward" is
 # the middle. If the camera isn't straight at center, adjust PAN_CENTER (the
 # firmware moves in 10° steps; for smaller errors, re-seat the servo horn).
 PAN_CENTER = 90
 PAN_MIN, PAN_MAX = 10, 170  # the firmware clamps to this range
-=======
+
 # Vision pushes updates far faster than a human can read them. Coalesce state
 # broadcasts to this interval so the WebSocket is not flooded.
 BROADCAST_INTERVAL = 0.1
->>>>>>> 9cbb2b0ff3d2833780173a6cc0fc87323f68d2b5
 
 # Stock firmware "rocker" directions (command N=102, parameter D1).
 DIRECTIONS = {
@@ -78,6 +76,7 @@ class Hub:
             "connected": False,
             "distance": None,
             "line": [None, None, None],
+            "look": 0,
             "people": 0,
             "person": False,
             "vision": {"fps": 0.0, "online": False, "enabled": False},
@@ -118,11 +117,6 @@ class Car:
         self.hub = hub
         self.writer = None
         self.write_lock = asyncio.Lock()
-<<<<<<< HEAD
-        self.clients = set()
-        self.state = {"connected": False, "distance": None, "line": [None, None, None], "look": 0}
-=======
->>>>>>> 9cbb2b0ff3d2833780173a6cc0fc87323f68d2b5
         self.last_drive = 0.0
         self.moving = False
 
@@ -157,7 +151,7 @@ class Car:
         angle = round((PAN_CENTER - int(offset)) / 10) * 10  # firmware snaps to 10° anyway
         angle = max(PAN_MIN, min(PAN_MAX, angle))
         await self.send({"H": "pan", "N": 5, "D1": 1, "D2": angle})
-        await self.set_state(look=PAN_CENTER - angle)
+        self.hub.update(look=PAN_CENTER - angle)
 
     # ---------- connection lifecycle ----------
     async def run(self):
@@ -168,12 +162,8 @@ class Car:
                     asyncio.open_connection(self.host, self.port), timeout=5
                 )
                 print("Car connected.")
-<<<<<<< HEAD
-                await self.set_state(connected=True)
-                await self.look(0)  # face forward on every (re)connect
-=======
                 self.hub.update(connected=True)
->>>>>>> 9cbb2b0ff3d2833780173a6cc0fc87323f68d2b5
+                await self.look(0)  # face forward on every (re)connect
                 tasks = [
                     asyncio.create_task(self.read_loop(reader)),
                     asyncio.create_task(self.poll_loop()),
@@ -376,12 +366,8 @@ def make_app(car, bot, hub, source):
                     await car.drive(data.get("dir"), data.get("speed", 150))
                 elif kind == "stop":
                     await car.stop()
-<<<<<<< HEAD
                 elif kind == "look":
                     await car.look(data.get("offset", 0))
-=======
-                elif kind == "pan":
-                    await car.pan(data.get("angle", 90))
                 elif kind == "say_now":
                     bot.manual(text=(data.get("text") or "").strip() or None)
                 elif kind == "mute":
@@ -393,7 +379,6 @@ def make_app(car, bot, hub, source):
                 elif kind == "recalibrate":
                     bot.nose.meter.recalibrate()
                     hub.update(smell=bot.nose.snapshot())
->>>>>>> 9cbb2b0ff3d2833780173a6cc0fc87323f68d2b5
         finally:
             hub.clients.discard(ws)
             if not hub.clients:
@@ -420,8 +405,6 @@ def make_app(car, bot, hub, source):
             saved.append(name)
         return web.json_response({"saved": saved, "skipped": skipped, "clips": list_clips()})
 
-    async def start_car(app):
-        app["car_task"] = asyncio.create_task(car.run())
     async def start(app):
         app["tasks"] = [
             asyncio.create_task(hub.broadcast_loop()),
@@ -443,8 +426,6 @@ def make_app(car, bot, hub, source):
     app.router.add_get("/api/clips", clips_list)
     app.router.add_post("/api/clips", clips_upload)
     app.router.add_static("/clips/", CLIPS_DIR)
-    app.on_startup.append(start_car)
-    app.on_cleanup.append(stop_car)
     app.router.add_post("/smell", smell_push)
     app.on_startup.append(start)
     app.on_cleanup.append(stop)

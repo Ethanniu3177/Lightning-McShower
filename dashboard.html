@@ -162,7 +162,6 @@
   }
   .said-line { font-size: 0.9rem; color: var(--ink-soft); min-height: 1.3em; margin: 0; }
 
-<<<<<<< Updated upstream
   .voice { border: none; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 0.95rem; }
   .voice legend { font-weight: 700; padding: 0; margin-bottom: 6px; }
   .voice input { accent-color: var(--rinse); }
@@ -180,7 +179,7 @@
   .drop-hint { font-size: 0.85rem; color: var(--ink-soft); margin: 8px 0 0; }
   body.dragging .shower { border-color: var(--rinse); border-style: dashed; }
   #phrase-field[hidden] { display: none; }
-=======
+
   /* Nose */
   .nose { grid-area: nose; }
   .nose .meter span { background: var(--rinse); }
@@ -208,7 +207,6 @@
   .log time { font-variant-numeric: tabular-nums; }
   .log .t-rude { border-left-color: var(--soap); }
   .log .t-savage { border-left-color: var(--warn); }
->>>>>>> Stashed changes
 
   @media (prefers-reduced-motion: reduce) {
     .soap.said { animation: none; }
@@ -495,20 +493,6 @@
     }
   }
 
-<<<<<<< Updated upstream
-  /* ---------- Shower reminders (spoken by the laptop) ---------- */
-  let lastSpoken = 0;
-  let clips = [];
-  let lastClip = null;
-  const player = new Audio();
-
-  const voiceMode = () => document.querySelector('input[name="voice"]:checked').value;
-  $("phrase-field").hidden = voiceMode() !== "tts";
-  document.querySelectorAll('input[name="voice"]').forEach((r) =>
-    r.addEventListener("change", () => { $("phrase-field").hidden = voiceMode() !== "tts"; }));
-
-  function lather() {
-=======
   function renderVision(s) {
     const badge = $("badge");
     const v = s.vision || {};
@@ -547,6 +531,13 @@
     $("stink-raw").textContent = bits.join(" · ");
   }
 
+  function lather() {
+    const btn = $("soap");
+    btn.classList.remove("said");
+    void btn.offsetWidth;
+    btn.classList.add("said");
+  }
+
   /* ---------- Reactions ----------
      The server decides what to say and says it through ElevenLabs clips or the
      Mac's `say`. We only render it -- unless the server reports it had no way to
@@ -563,68 +554,9 @@
     li.querySelector("b").textContent = msg.text;
     $("log").prepend(li);
     while ($("log").children.length > 6) $("log").lastElementChild.remove();
-
->>>>>>> Stashed changes
-    const btn = $("soap");
-    btn.classList.remove("said");
-    void btn.offsetWidth;
-    btn.classList.add("said");
-  }
-
-<<<<<<< Updated upstream
-  function markPlaying(name) {
-    document.querySelectorAll("#clip-list button").forEach((b) =>
-      b.classList.toggle("playing", b.dataset.name === name));
-  }
-  player.addEventListener("ended", () => markPlaying(null));
-
-  function playClip(name) {
-    speechSynthesis?.cancel();
-    player.pause();
-    player.src = `/clips/${encodeURIComponent(name)}`;
-    lastClip = name;
-    lastSpoken = Date.now();
-    markPlaying(name);
-    player.play().then(() => {
-      $("said").textContent = `Played: ${name}`;
-    }).catch(() => {
-      markPlaying(null);
-      $("said").textContent = /\.caf$/i.test(name)
-        ? `${name} is in a format this browser can't play. Export it from Voice Memos as .m4a.`
-        : `Couldn't play ${name}. Click anywhere on the page once, then try again.`;
-    });
     lather();
   }
 
-  function speak() {
-    const custom = $("phrase").value.trim();
-    const text = custom || PHRASES[Math.floor(Math.random() * PHRASES.length)];
-    lastSpoken = Date.now();
-    player.pause();
-    markPlaying(null);
-    if ("speechSynthesis" in window) {
-      speechSynthesis.cancel();
-      const u = new SpeechSynthesisUtterance(text);
-      u.pitch = 1.1;
-      speechSynthesis.speak(u);
-      $("said").textContent = `Said: "${text}"`;
-    } else {
-      $("said").textContent = "This browser can't speak aloud. Try Chrome, Edge, or Safari.";
-    }
-    lather();
-  }
-
-  function sayShower() {
-    if (voiceMode() === "clips" && clips.length) {
-      // Random clip, avoiding an immediate repeat when there's more than one.
-      const pool = clips.length > 1 ? clips.filter((c) => c !== lastClip) : clips;
-      playClip(pool[Math.floor(Math.random() * pool.length)]);
-    } else {
-      speak();
-    }
-  }
-  $("soap").addEventListener("click", sayShower);
-=======
   function onSpoken(msg) {
     if (msg.backend !== "none") return;
     if (!("speechSynthesis" in window)) {
@@ -637,14 +569,59 @@
     speechSynthesis.speak(u);
   }
 
-  $("soap").addEventListener("click", () =>
-    send({ type: "say_now", text: $("phrase").value.trim() }));
+  /* ---------- Shower button ----------
+     "My recordings" plays an uploaded clip in this browser. "Computer voice"
+     asks the server to speak, which also logs it as a reaction. */
+  let clips = [];
+  let lastClip = null;
+  const player = new Audio();
+
+  const voiceMode = () => document.querySelector('input[name="voice"]:checked').value;
+  $("phrase-field").hidden = voiceMode() !== "tts";
+  document.querySelectorAll('input[name="voice"]').forEach((r) =>
+    r.addEventListener("change", () => { $("phrase-field").hidden = voiceMode() !== "tts"; }));
+
+  function markPlaying(name) {
+    document.querySelectorAll("#clip-list button").forEach((b) =>
+      b.classList.toggle("playing", b.dataset.name === name));
+  }
+  player.addEventListener("ended", () => markPlaying(null));
+
+  function playClip(name) {
+    speechSynthesis?.cancel();
+    player.pause();
+    player.src = `/clips/${encodeURIComponent(name)}`;
+    lastClip = name;
+    markPlaying(name);
+    player.play().then(() => {
+      $("said").textContent = `Played: ${name}`;
+    }).catch(() => {
+      markPlaying(null);
+      $("said").textContent = /\.caf$/i.test(name)
+        ? `${name} is in a format this browser can't play. Export it from Voice Memos as .m4a.`
+        : `Couldn't play ${name}. Click anywhere on the page once, then try again.`;
+    });
+    lather();
+  }
+
+  function sayShower() {
+    if (voiceMode() === "clips" && clips.length) {
+      // Random clip, avoiding an immediate repeat when there's more than one.
+      const pool = clips.length > 1 ? clips.filter((c) => c !== lastClip) : clips;
+      playClip(pool[Math.floor(Math.random() * pool.length)]);
+    } else {
+      player.pause();
+      markPlaying(null);
+      send({ type: "say_now", text: voiceMode() === "tts" ? $("phrase").value.trim() : "" });
+    }
+  }
+
+  $("soap").addEventListener("click", sayShower);
   $("mute").addEventListener("change", () =>
     send({ type: "mute", muted: $("mute").checked }));
   $("stink-test").addEventListener("click", () =>
     send({ type: "fake_smell", level: 90, seconds: 8 }));
   $("stink-cal").addEventListener("click", () => send({ type: "recalibrate" }));
->>>>>>> Stashed changes
 
   function renderClips() {
     const list = $("clip-list");
