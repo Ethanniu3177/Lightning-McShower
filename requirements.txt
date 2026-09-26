@@ -1,0 +1,16 @@
+# Bridge + dashboard (already required today)
+aiohttp>=3.9
+
+# Vision: MJPEG decode + YOLO person detection.
+# NOTE: ultralytics pulls PyTorch (>1 GB). Install this days before the demo --
+# it will NOT download while the laptop is joined to the car's ELEGOO AP.
+opencv-python>=4.9
+ultralytics>=8.3
+numpy>=1.26
+
+# Smell sensor over USB serial (optional -- only for --smell serial)
+pyserial>=3.5
+
+# ElevenLabs, used by tools/gen_voices.py ONLY, ahead of time and online.
+# Nothing at demo time imports this.
+elevenlabs>=1.0
