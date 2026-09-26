@@ -357,7 +357,7 @@ The existing files **stay where they are** (moving them mid-hackathon breaks tea
 
 ```
 Lightning-McShower/
-├── README.md                 # team task list (root)
+├── README.md                 # pitch, to-build list, quickstart, team
 ├── bridge.py                 # ✅ car link + dashboard server + clip API (grows: stream proxy, modes)
 ├── dashboard.html            # ✅ UI + clip playback/upload (grows: speaker picker, mode toggle, verdict card)
 ├── clips/                    # ✅ recorded voice lines (.m4a/.mp3/.wav)
@@ -380,7 +380,7 @@ Lightning-McShower/
 ├── data/roasts.jsonl         # curated lines: clip filename, text, tier, tags
 ├── zo/stank_board/           # Zo-hosted leaderboard
 ├── firmware/uno/             # sniff patch (stretch), based on original ELEGOO sketch
-└── docs/                     # README.md, TECHNICAL.md, SPRINTS.md, media/
+└── docs/                     # TECHNICAL.md, SPRINTS.md, media/
 ```
 
 ## Config
