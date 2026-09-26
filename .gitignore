@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+
+# YOLO weights: fetched by tools/setup.sh, too big for git.
+models/
+
+# Generated ElevenLabs clips. The manifest IS tracked so the line list travels
+# with the repo even when the audio does not.
+audio/*.mp3
+audio/*.wav
+audio/*.aiff
+!audio/manifest.json
+
+.DS_Store
