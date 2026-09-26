@@ -82,7 +82,7 @@ See [SPRINTS.md](docs/SPRINTS.md) for the checklists, timeline and fallback demo
 | Hold a pad arrow, or `W/A/S/D` / arrow keys | Drive (diagonals work) |
 | `Space` or **Stop** | Stop |
 | Speed slider | 60–255 |
-| Sensor direction slider | Pan the camera + ultrasonic |
+| Camera direction slider, **Center**, `Q`/`E`/`C` | Look left/right (camera + ultrasonic); the camera faces forward whenever the car connects |
 | **Tell them to shower** | Play a random recording (or speak a typed/random line in computer-voice mode) |
 | Reminder voice | *My recordings* or *Computer voice* |
 | Add files / drag-and-drop | Upload voice clips (saved to `clips/`). Export Voice Memos as `.m4a`. |

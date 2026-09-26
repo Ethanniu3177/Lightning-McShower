@@ -32,6 +32,12 @@ DASHBOARD_PORT = 8080
 # This is the safety net for a closed tab, a dropped WebSocket, or a stuck key.
 DRIVE_TIMEOUT = 0.5
 
+# Pan servo (camera + ultrasonic). On this car 0° points right, so "forward" is
+# the middle. If the camera isn't straight at center, adjust PAN_CENTER (the
+# firmware moves in 10° steps; for smaller errors, re-seat the servo horn).
+PAN_CENTER = 90
+PAN_MIN, PAN_MAX = 10, 170  # the firmware clamps to this range
+
 # Stock firmware "rocker" directions (command N=102, parameter D1).
 DIRECTIONS = {
     "forward": 1, "back": 2, "left": 3, "right": 4,
@@ -48,7 +54,7 @@ class Car:
         self.writer = None
         self.write_lock = asyncio.Lock()
         self.clients = set()
-        self.state = {"connected": False, "distance": None, "line": [None, None, None]}
+        self.state = {"connected": False, "distance": None, "line": [None, None, None], "look": 0}
         self.last_drive = 0.0
         self.moving = False
 
@@ -78,9 +84,12 @@ class Car:
         self.moving = False
         await self.send({"H": "stop", "N": 100})  # clear functions, standby
 
-    async def pan(self, angle):
-        angle = max(0, min(180, int(angle)))
+    async def look(self, offset):
+        """Point the camera `offset` degrees from forward: negative = left, positive = right."""
+        angle = round((PAN_CENTER - int(offset)) / 10) * 10  # firmware snaps to 10° anyway
+        angle = max(PAN_MIN, min(PAN_MAX, angle))
         await self.send({"H": "pan", "N": 5, "D1": 1, "D2": angle})
+        await self.set_state(look=PAN_CENTER - angle)
 
     # ---------- connection lifecycle ----------
     async def run(self):
@@ -92,6 +101,7 @@ class Car:
                 )
                 print("Car connected.")
                 await self.set_state(connected=True)
+                await self.look(0)  # face forward on every (re)connect
                 tasks = [
                     asyncio.create_task(self.read_loop(reader)),
                     asyncio.create_task(self.poll_loop()),
@@ -219,8 +229,8 @@ def make_app(car):
                     await car.drive(data.get("dir"), data.get("speed", 150))
                 elif kind == "stop":
                     await car.stop()
-                elif kind == "pan":
-                    await car.pan(data.get("angle", 90))
+                elif kind == "look":
+                    await car.look(data.get("offset", 0))
         finally:
             car.clients.discard(ws)
             await car.stop()  # dashboard closed or dropped: stop the car

@@ -74,7 +74,7 @@ flowchart LR
 - **Driving:** `drive(dir, speed)` sends the **N=102 "rocker"** command with 8 directions (`forward=1, back=2, left=3, right=4, forward_left=5, back_left=6, forward_right=7, back_right=8`). `stop()` sends **N=100**.
 - **Safety watchdog:** if no drive update arrives for **0.5 s**, it sends stop. When a dashboard WebSocket closes, it sends stop.
 - **Sensor polling:** ultrasonic (`N=21, D1=2`, tag `dist`) every 0.3 s. Line sensors (`N=22`, tags `L0..L2`) every ~0.9 s.
-- **Pan:** `N=5, D1=1, D2=<angle>`.
+- **Camera direction:** `look(offset)` takes degrees from forward (negative = left) and sends `N=5, D1=1, D2=PAN_CENTER - offset`, clamped to 10–170°. The camera re-centers on every (re)connect. `PAN_CENTER` (default 90) is the calibration knob.
 - **Voice clips:** `GET /api/clips` lists audio files in `clips/` (`.m4a .mp3 .wav .aac .ogg .caf`). `POST /api/clips` takes multipart uploads (≤ 50 MB, sanitized names, never overwrites). `/clips/<name>` serves the files.
 - **Serves** `dashboard.html` at `/`, and uses `/ws` for state push + commands. Messages from the browser look like `{"type":"drive","dir":…,"speed":…}`, `{"type":"stop"}` and `{"type":"pan","angle":…}`.
 
