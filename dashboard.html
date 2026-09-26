@@ -156,6 +156,24 @@
   }
   .said-line { font-size: 0.9rem; color: var(--ink-soft); min-height: 1.3em; margin: 0; }
 
+  .voice { border: none; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 0.95rem; }
+  .voice legend { font-weight: 700; padding: 0; margin-bottom: 6px; }
+  .voice input { accent-color: var(--rinse); }
+
+  .clips-head { display: flex; justify-content: space-between; align-items: center; font-weight: 700; margin-bottom: 8px; }
+  .upload-btn { font-size: 0.9rem; cursor: pointer; }
+  .upload-btn:focus-within { outline: 3px solid var(--rinse); outline-offset: 2px; }
+  .clip-list { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 8px; max-height: 180px; overflow-y: auto; }
+  .clip-list button {
+    background: var(--tile); border: 2px solid var(--grout); border-radius: 999px;
+    padding: 6px 14px; font-size: 0.9rem; font-weight: 600; max-width: 100%;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .clip-list button.playing { background: var(--soap); border-color: var(--soap); color: var(--soap-ink); }
+  .drop-hint { font-size: 0.85rem; color: var(--ink-soft); margin: 8px 0 0; }
+  body.dragging .shower { border-color: var(--rinse); border-style: dashed; }
+  #phrase-field[hidden] { display: none; }
+
   @media (prefers-reduced-motion: reduce) {
     .soap.said { animation: none; }
     .meter span { transition: none; }
@@ -219,8 +237,24 @@
 
   <section class="panel shower" aria-label="Shower reminders">
     <button class="soap" id="soap">Tell them to shower</button>
-    <div class="field">
-      <label for="phrase">What to say (leave blank for a random line)</label>
+
+    <fieldset class="voice">
+      <legend>Reminder voice</legend>
+      <label><input type="radio" name="voice" value="clips" checked> My recordings (random)</label>
+      <label><input type="radio" name="voice" value="tts"> Computer voice</label>
+    </fieldset>
+
+    <div class="clips">
+      <div class="clips-head">
+        <span>Recordings</span>
+        <label class="ghost upload-btn">Add files<input type="file" id="clip-file" accept="audio/*,.m4a,.caf" multiple hidden></label>
+      </div>
+      <ul id="clip-list" class="clip-list"></ul>
+      <p class="drop-hint" id="drop-hint">Drop audio files anywhere on this page, or use Add files.</p>
+    </div>
+
+    <div class="field" id="phrase-field">
+      <label for="phrase">What the computer voice says (leave blank for a random line)</label>
       <input type="text" id="phrase" placeholder="Hey you. Shower time.">
     </div>
     <div class="auto">
@@ -387,25 +421,136 @@
 
   /* ---------- Shower reminders (spoken by the laptop) ---------- */
   let lastSpoken = 0;
-  function sayShower() {
-    const custom = $("phrase").value.trim();
-    const text = custom || PHRASES[Math.floor(Math.random() * PHRASES.length)];
-    lastSpoken = Date.now();
-    $("said").textContent = `Said: "${text}"`;
-    if ("speechSynthesis" in window) {
-      speechSynthesis.cancel();
-      const u = new SpeechSynthesisUtterance(text);
-      u.pitch = 1.1;
-      speechSynthesis.speak(u);
-    } else {
-      $("said").textContent = "This browser can't speak aloud. Try Chrome, Edge, or Safari.";
-    }
+  let clips = [];
+  let lastClip = null;
+  const player = new Audio();
+
+  const voiceMode = () => document.querySelector('input[name="voice"]:checked').value;
+  $("phrase-field").hidden = voiceMode() !== "tts";
+  document.querySelectorAll('input[name="voice"]').forEach((r) =>
+    r.addEventListener("change", () => { $("phrase-field").hidden = voiceMode() !== "tts"; }));
+
+  function lather() {
     const btn = $("soap");
     btn.classList.remove("said");
     void btn.offsetWidth;
     btn.classList.add("said");
   }
+
+  function markPlaying(name) {
+    document.querySelectorAll("#clip-list button").forEach((b) =>
+      b.classList.toggle("playing", b.dataset.name === name));
+  }
+  player.addEventListener("ended", () => markPlaying(null));
+
+  function playClip(name) {
+    speechSynthesis?.cancel();
+    player.pause();
+    player.src = `/clips/${encodeURIComponent(name)}`;
+    lastClip = name;
+    lastSpoken = Date.now();
+    markPlaying(name);
+    player.play().then(() => {
+      $("said").textContent = `Played: ${name}`;
+    }).catch(() => {
+      markPlaying(null);
+      $("said").textContent = /\.caf$/i.test(name)
+        ? `${name} is in a format this browser can't play. Export it from Voice Memos as .m4a.`
+        : `Couldn't play ${name}. Click anywhere on the page once, then try again.`;
+    });
+    lather();
+  }
+
+  function speak() {
+    const custom = $("phrase").value.trim();
+    const text = custom || PHRASES[Math.floor(Math.random() * PHRASES.length)];
+    lastSpoken = Date.now();
+    player.pause();
+    markPlaying(null);
+    if ("speechSynthesis" in window) {
+      speechSynthesis.cancel();
+      const u = new SpeechSynthesisUtterance(text);
+      u.pitch = 1.1;
+      speechSynthesis.speak(u);
+      $("said").textContent = `Said: "${text}"`;
+    } else {
+      $("said").textContent = "This browser can't speak aloud. Try Chrome, Edge, or Safari.";
+    }
+    lather();
+  }
+
+  function sayShower() {
+    if (voiceMode() === "clips" && clips.length) {
+      // Random clip, avoiding an immediate repeat when there's more than one.
+      const pool = clips.length > 1 ? clips.filter((c) => c !== lastClip) : clips;
+      playClip(pool[Math.floor(Math.random() * pool.length)]);
+    } else {
+      speak();
+    }
+  }
   $("soap").addEventListener("click", sayShower);
+
+  function renderClips() {
+    const list = $("clip-list");
+    list.replaceChildren();
+    clips.forEach((name) => {
+      const li = document.createElement("li");
+      const b = document.createElement("button");
+      b.textContent = name.replace(/\.[^.]+$/, "");
+      b.title = `Play ${name}`;
+      b.dataset.name = name;
+      b.addEventListener("click", () => playClip(name));
+      li.append(b);
+      list.append(li);
+    });
+    $("drop-hint").textContent = clips.length
+      ? "Drop more audio files anywhere on this page to add them."
+      : "No recordings yet. Drop audio files anywhere on this page, or use Add files. Until then, the computer voice is used.";
+  }
+
+  async function loadClips() {
+    try {
+      clips = await (await fetch("/api/clips")).json();
+    } catch { clips = []; }
+    renderClips();
+  }
+
+  async function uploadClips(files) {
+    const form = new FormData();
+    [...files].forEach((f) => form.append("file", f, f.name));
+    $("said").textContent = "Adding recordings…";
+    try {
+      const res = await fetch("/api/clips", { method: "POST", body: form });
+      if (!res.ok) throw new Error(res.status === 413 ? "files are too large (50 MB limit)" : `error ${res.status}`);
+      const out = await res.json();
+      clips = out.clips;
+      renderClips();
+      const parts = [];
+      if (out.saved.length) parts.push(`Added ${out.saved.length} recording${out.saved.length > 1 ? "s" : ""}.`);
+      if (out.skipped.length) parts.push(`Skipped ${out.skipped.join(", ")}: not an audio file.`);
+      $("said").textContent = parts.join(" ");
+    } catch (err) {
+      $("said").textContent = `Couldn't add recordings: ${err.message}. Is bridge.py running?`;
+    }
+  }
+
+  $("clip-file").addEventListener("change", (e) => {
+    if (e.target.files.length) uploadClips(e.target.files);
+    e.target.value = "";
+  });
+
+  let dragDepth = 0;
+  document.addEventListener("dragenter", (e) => { e.preventDefault(); dragDepth++; document.body.classList.add("dragging"); });
+  document.addEventListener("dragleave", () => { if (--dragDepth <= 0) { dragDepth = 0; document.body.classList.remove("dragging"); } });
+  document.addEventListener("dragover", (e) => e.preventDefault());
+  document.addEventListener("drop", (e) => {
+    e.preventDefault();
+    dragDepth = 0;
+    document.body.classList.remove("dragging");
+    if (e.dataTransfer.files.length) uploadClips(e.dataTransfer.files);
+  });
+
+  loadClips();
 
   connect();
   loadCamera();

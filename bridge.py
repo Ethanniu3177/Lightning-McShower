@@ -11,6 +11,9 @@ Setup:
   3. pip install aiohttp
   4. python bridge.py            (or: python bridge.py --car-host 192.168.4.1)
   5. Open http://localhost:8080
+
+Audio clips: drop .m4a / .mp3 / .wav files into the "clips" folder next to this
+file, or drag them onto the dashboard. The laptop plays them.
 """
 import argparse
 import asyncio
@@ -171,6 +174,27 @@ class Car:
 
 
 HERE = Path(__file__).parent
+CLIPS_DIR = HERE / "clips"
+AUDIO_EXTS = {".m4a", ".mp3", ".wav", ".aac", ".ogg", ".caf"}
+MAX_UPLOAD_MB = 50
+
+
+def list_clips():
+    CLIPS_DIR.mkdir(exist_ok=True)
+    return sorted(p.name for p in CLIPS_DIR.iterdir()
+                  if p.is_file() and p.suffix.lower() in AUDIO_EXTS)
+
+
+def safe_name(name):
+    name = Path(name or "clip").name  # drop any directory parts
+    stem = re.sub(r"[^\w\- ]", "", Path(name).stem).strip() or "clip"
+    ext = Path(name).suffix.lower()
+    candidate = f"{stem}{ext}"
+    n = 2
+    while (CLIPS_DIR / candidate).exists():  # never overwrite an existing clip
+        candidate = f"{stem} {n}{ext}"
+        n += 1
+    return candidate
 
 
 def make_app(car):
@@ -202,15 +226,39 @@ def make_app(car):
             await car.stop()  # dashboard closed or dropped: stop the car
         return ws
 
+    async def clips_list(request):
+        return web.json_response(list_clips())
+
+    async def clips_upload(request):
+        CLIPS_DIR.mkdir(exist_ok=True)
+        saved, skipped = [], []
+        reader = await request.multipart()
+        async for part in reader:
+            if not part.filename:
+                continue
+            if Path(part.filename).suffix.lower() not in AUDIO_EXTS:
+                skipped.append(part.filename)
+                continue
+            name = safe_name(part.filename)
+            with open(CLIPS_DIR / name, "wb") as f:
+                while chunk := await part.read_chunk():
+                    f.write(chunk)
+            saved.append(name)
+        return web.json_response({"saved": saved, "skipped": skipped, "clips": list_clips()})
+
     async def start_car(app):
         app["car_task"] = asyncio.create_task(car.run())
 
     async def stop_car(app):
         app["car_task"].cancel()
 
-    app = web.Application()
+    CLIPS_DIR.mkdir(exist_ok=True)
+    app = web.Application(client_max_size=MAX_UPLOAD_MB * 1024 * 1024)
     app.router.add_get("/", index)
     app.router.add_get("/ws", ws_handler)
+    app.router.add_get("/api/clips", clips_list)
+    app.router.add_post("/api/clips", clips_upload)
+    app.router.add_static("/clips/", CLIPS_DIR)
     app.on_startup.append(start_car)
     app.on_cleanup.append(stop_car)
     return app
