@@ -71,8 +71,14 @@ whole thing off. `tools/setup.sh` fetches all three models.
 
 ## Smell sensor wiring
 
-The stock Elegoo firmware has no gas-sensor command, so the sensor does not ride
-the car's TCP link. Two real options, both supported:
+With our patched UNO firmware (Scott's v2.1.2 fork: BME688 driver + command
+`N=24`), the BME688 wires to the UNO (`5V, GND, SDA→A4, SCL→A5`) and its readings
+ride the car's existing TCP link. The stock ESP32 forwards them unchanged:
+
+    python bridge.py --smell car      # polls N=24 every ~3 s; shows gas/temp/RH/pressure
+
+The stock Elegoo firmware has no gas-sensor command. Without the patch, two other
+options are supported:
 
     python bridge.py --smell serial --serial-port /dev/cu.usbmodem1101
     python bridge.py --smell http     # an ESP32 POSTs to http://<laptop>:8080/smell
@@ -119,7 +125,7 @@ See [SPRINTS.md](docs/SPRINTS.md) for the checklists, timeline and fallback demo
 | Speaker picker (laptop vs Bluetooth) | ⏳ planned | |
 | Moss roast matching · Zo Stank Board · Firecrawl library | ⏳ planned | |
 | Autonomous driving | ⏳ planned | |
-| Real gas sensor on the car (BME688 / ENS160) | ⏳ needs hardware | `nose.py` |
+| Real gas sensor on the car (BME688 over the car link, `--smell car`) | 🧪 software built, needs patched firmware flashed + hardware test | `bridge.py`, `nose.py` |
 
 ## How it works (target design)
 

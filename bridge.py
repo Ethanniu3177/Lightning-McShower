@@ -62,6 +62,24 @@ DIRECTIONS = {
 FRAME_RE = re.compile(r"\{[^{}]*\}")      # car frames are brace-delimited
 REPLY_RE = re.compile(r"^\{(\w+)_(.*)\}$")  # replies look like {<H tag>_<value>}
 
+# BME688 poll (patched firmware, N=24): every this many ultrasonic polls, ~3 s.
+# The firmware only samples every 3 s, so asking faster just repeats a reading.
+ENV_POLL_EVERY = 10
+
+
+def parse_env(value):
+    """Turn an N=24 D1=4 reply value into a nose reading, or None.
+
+    The firmware sends "<temp 0.01 C>,<humidity 0.01 %RH>,<pressure Pa>,<gas ohms>",
+    or "none" before its first sample. Gas is 0 until the heater is stable, which
+    nose.intensity() already skips.
+    """
+    try:
+        t, h, p, g = (int(x) for x in value.split(","))
+    except ValueError:
+        return None
+    return {"gas_ohms": g, "temp_c": t / 100, "rh": h / 100, "hpa": round(p / 100, 1)}
+
 
 class Hub:
     """The one place state lives, and the one thing that talks to dashboards.
@@ -113,9 +131,10 @@ class Hub:
 
 
 class Car:
-    def __init__(self, host, port, hub):
+    def __init__(self, host, port, hub, smell=None):
         self.host, self.port = host, port
         self.hub = hub
+        self.smell = smell  # a nose CarSmellSource when --smell car, else None
         self.writer = None
         self.write_lock = asyncio.Lock()
         self.last_drive = 0.0
@@ -215,6 +234,10 @@ class Car:
                 line = list(self.hub.state["line"])
                 line[int(tag[1])] = int(value)
                 self.hub.update(line=line)
+            elif tag == "env" and self.smell:
+                reading = parse_env(value)
+                if reading:
+                    self.smell.push(reading)
         except ValueError:
             pass  # e.g. {dist_ok} acknowledgements
 
@@ -224,6 +247,8 @@ class Car:
             await self.send({"H": "dist", "N": 21, "D1": 2})  # ultrasonic distance, cm
             await asyncio.sleep(0.3)
             n += 1
+            if self.smell and n % ENV_POLL_EVERY == 0:
+                await self.send({"H": "env", "N": 24, "D1": 4})  # BME688: t,h,p,gas
             if n % 3 == 0:  # line sensors change less often; poll them slower
                 for i in range(3):  # 0 = left, 1 = middle, 2 = right
                     await self.send({"H": f"L{i}", "N": 22, "D1": i})
@@ -349,7 +374,7 @@ def make_app(car, bot, hub, source, board):
 
     async def smell_push(request):
         """Ingest for an ESP32 riding on the car: POST {"tvoc": 220, "eco2": 850}."""
-        if not isinstance(source, nose_mod.PushSmellSource):
+        if source.name != "http":
             return web.json_response({"error": "bridge not started with --smell http"},
                                      status=409)
         try:
@@ -465,7 +490,8 @@ def main():
     parser.add_argument("--no-vision", action="store_true",
                         help="proxy the camera but skip YOLO")
     parser.add_argument("--model", default=str(vision_mod.DEFAULT_MODEL))
-    parser.add_argument("--smell", choices=["fake", "serial", "http"], default="fake")
+    parser.add_argument("--smell", choices=["fake", "serial", "http", "car"], default="fake",
+                        help="car = BME688 on the UNO over the car link (patched firmware)")
     parser.add_argument("--serial-port", default=None)
     parser.add_argument("--no-audio", action="store_true")
     parser.add_argument("--no-capture", action="store_true",
@@ -476,10 +502,11 @@ def main():
     print(f"Vision: {'person detection on' if use_yolo else 'OFF -- ' + why}")
 
     hub = Hub()
-    car = Car(args.car_host, args.car_port, hub)
+    source = nose_mod.make_source(args.smell, args.serial_port)
+    car = Car(args.car_host, args.car_port, hub,
+              smell=source if isinstance(source, nose_mod.CarSmellSource) else None)
     vis = vision_mod.Vision(camera_url=args.camera_url, camera_index=args.camera,
                             enabled=use_yolo, model_path=args.model)
-    source = nose_mod.make_source(args.smell, args.serial_port)
     nose = nose_mod.Nose(source, on_update=lambda s: None)
     voice = voice_mod.Voice(enabled=not args.no_audio)
     reactor = reactor_mod.Reactor()

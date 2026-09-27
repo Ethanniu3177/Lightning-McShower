@@ -1,13 +1,15 @@
 """
 The nose: turning an air-quality sensor into one number between 0 and 100.
 
-The Elegoo stock firmware has no gas-sensor command, so smell data cannot ride the
-existing TCP link to the car. Three ways in, all behind one interface:
+The Elegoo stock firmware has no gas-sensor command, but our patched UNO firmware
+adds one (N=24, BME688), so smell can ride the existing TCP link to the car. Four
+ways in, all behind one interface:
 
   FakeSmellSource    simulated -- the default, so the whole feature is demoable
                      with no hardware at all
   SerialSmellSource  a microcontroller on USB, one JSON object per line
   PushSmellSource    an ESP32 on the car POSTing to /smell over the ELEGOO AP
+  CarSmellSource     the BME688 on the car's UNO; bridge.py polls N=24 and pushes
 
 Whatever the sensor, it reports drifting absolute numbers that mean nothing on
 their own -- 150 ppb TVOC is filthy in a clean lab and pristine in a hackathon
@@ -228,6 +230,15 @@ class PushSmellSource(SmellSource):
             emit(await self.queue.get())
 
 
+class CarSmellSource(PushSmellSource):
+    """The BME688 wired to the car's UNO (patched firmware, command N=24).
+
+    Same queue as PushSmellSource, but the pusher is bridge.py's car link rather
+    than an HTTP POST: it polls the car and pushes each parsed reading here.
+    """
+    name = "car"
+
+
 class Nose:
     """Owns a source and a meter, and reports every change upward."""
 
@@ -258,4 +269,6 @@ def make_source(kind, serial_port=None):
         return SerialSmellSource(serial_port)
     if kind == "http":
         return PushSmellSource()
+    if kind == "car":
+        return CarSmellSource()
     return FakeSmellSource()

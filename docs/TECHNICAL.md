@@ -98,7 +98,7 @@ Verified by reading ELEGOO's source for **both** firmware generations:
 - **New v2.1.2 rewrite** ([ELEGOO-Smart-Robot-Car-Kit-V4.0-New](https://github.com/elegooofficial/ELEGOO-Smart-Robot-Car-Kit-V4.0-New)).
 - **ESP32 bridge:** `ESP32_CameraServer_AP_20220120` ([source mirror](https://github.com/Toremetal/ESP32_Examples-ESP32-Camera-CameraWebServer)).
 
-> ⚠️ **Don't reflash the UNO to v2.1.2.** In v2.1.2, `N=5` reads `D2` as a uint8 and divides it by 10, so the dashboard's pan slider would break. The original firmware handles `N=5` correctly. Keep the stock firmware.
+> ⚠️ **Don't reflash the UNO to *stock* v2.1.2.** In stock v2.1.2, `N=5` reads `D2` as a uint8, divides it by 10, and detaches the servo immediately, so the dashboard's pan slider would break. The original firmware handles `N=5` correctly. Our **patched** v2.1.2 (BME688 build, see [Sniff module](#sniff-module-bme688-stretch)) restores the original `N=5` behavior: `D1` selects the servo, `D2` is in degrees, snapped to 10° and clamped to 10°–170°. It moves the servo without blocking.
 
 ### Transport
 - Laptop ⇄ ESP32 is **TCP `192.168.4.1:100`**. ESP32 ⇄ UNO is UART 9600 baud.
@@ -306,11 +306,13 @@ stateDiagram-v2
 *Owner: Scott. It's only worth doing after the vision + audio loop works.*
 
 - **Sensor:** Seengreat BME688 Rev 1.0. It takes **3.3 V or 5 V** (onboard regulator + level shifting), so it can wire straight to the UNO: `5V, GND, SDA(A4), SCL(A5)`. The **address switch defaults to 0x77**, and the shield's MPU6050 is 0x68, so they **don't conflict**. For I2C, leave MISO/ADDR and CS unconnected.
-- **Firmware patch:** based on the **original** ELEGOO sketch (`SmartRobotCarV4.0_V0_20210104`; not v2.1.2, see above).
-  - Add **Adafruit BME680** (supports the 688's raw gas resistance). **Not** Bosch BSEC2, which is too big for a 32 KB / 2 KB UNO.
-  - Add a new command `N=40` → `{H_<gas_ohms>,<temp_x10>,<rh_x10>,<age_ms>}`. Use integers only, because AVR `sprintf` has no `%f`. Sample in the background every ~3 s and reply from a cached value, so a heater cycle never stalls the drive loop.
-  - The ESP32 needs no changes, since it forwards any `}`-terminated reply.
-- **Flash/RAM:** compile before and after. If flash > 95% or RAM > 75%, trim unused code (the IR remote, line-tracking mode).
+- **Firmware patch (built):** based on ELEGOO **v2.1.2**, with the `N=5` pan fix (see above).
+  - A compact in-tree BME688 driver using Bosch's integer compensation formulas, sharing I2C with the MPU6050. Adafruit BME680 and Bosch BSEC2 don't fit: v2.1.2 already used 91% of flash.
+  - The sensor runs a forced-mode measurement every 3 s in the background: heater at 320 °C for 150 ms. It never stalls the drive loop.
+  - A new command `N=24` replies from the cached sample. `D1=4` → `{H_<temp 0.01 °C>,<RH 0.01 %>,<pressure Pa>,<gas Ω>}`. `D1=0..3` returns one field. Gas is `0` until the heater is stable, and the reply is `{H_none}` before the first sample. Unlike `N=21/22`, it doesn't change the car's mode.
+  - The ESP32 needs no changes, since it forwards any `}`-terminated reply (verified in `SocketServer_Test()`).
+- **Flash/RAM:** 98% flash (~600 B free), 68% RAM. To make room, `serialEvent()`'s `String` buffer became a fixed `char[128]`, which removed `String`/`malloc` from the build.
+- **Bridge:** `python bridge.py --smell car`. `Car.poll_loop()` sends `{"H":"env","N":24,"D1":4}` every ~3 s. `Car.handle()` parses it with `parse_env()` and pushes `{gas_ohms, temp_c, rh, hpa}` into `nose.CarSmellSource`. The nose inverts `gas_ohms` and scores against its 30 s baseline. The dashboard's nose panel shows all four fields.
 - **Signal:** baseline = rolling median while nobody is within 150 cm. Sniff = min of 3 readings at the stop distance. `drop = (R0 − R)/R0`, and 25% maps to gas_score 100.
 - **Honesty:** at car height it smells shoes, and breath will register too. Treat it as comedy garnish, weighted at 0.3. Warm the sensor ≥ 15 min before demoing.
 - **Mounting:** front bumper, facing forward, away from the battery and motor driver (heat).
