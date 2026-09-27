@@ -527,6 +527,8 @@ def main():
     parser.add_argument("--no-audio", action="store_true")
     parser.add_argument("--no-capture", action="store_true",
                         help="don't photograph faces for the leaderboard")
+    parser.add_argument("--no-cap", action="store_true",
+                        help="don't draw shower caps on people in the stream")
     args = parser.parse_args()
 
     use_yolo, why = vision_mod.probe(not args.no_vision)
@@ -537,7 +539,7 @@ def main():
     car = Car(args.car_host, args.car_port, hub,
               smell=source if isinstance(source, nose_mod.CarSmellSource) else None)
     vis = vision_mod.Vision(camera_url=args.camera_url, camera_index=args.camera,
-                            enabled=use_yolo, model_path=args.model)
+                            enabled=use_yolo, model_path=args.model, cap=not args.no_cap)
     nose = nose_mod.Nose(source, on_update=lambda s: None)
     voice = voice_mod.Voice(enabled=not args.no_audio)
     reactor = reactor_mod.Reactor()

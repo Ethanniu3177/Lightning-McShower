@@ -126,7 +126,8 @@ class Vision:
     """Owns the camera, publishes annotated frames, reports who is in view."""
 
     def __init__(self, camera_url=CAMERA_URL, camera_index=None,
-                 enabled=True, model_path=DEFAULT_MODEL, on_update=None, on_frame=None):
+                 enabled=True, model_path=DEFAULT_MODEL, on_update=None, on_frame=None,
+                 cap=True):
         self.camera_url = camera_url
         self.camera_index = camera_index
         self.enabled = enabled
@@ -135,12 +136,16 @@ class Vision:
         # faces.py takes photos and reads raised hands from it.
         self.on_frame = on_frame or (lambda *_: None)
         self.detector = PersonDetector(model_path) if enabled else None
+        # Shower caps on the stream (showercap.py). Loaded on first draw; None
+        # until then, False if it can't load.
+        self.cap = None if cap else False
 
         self.latest = b""
         self.seq = 0
         self._waiters = set()
 
         self.boxes = []
+        self.keypoints = []
         self.people = 0
         self.person = False
         self.near = False
@@ -217,6 +222,7 @@ class Vision:
             self.online = online
             if not online:
                 self.boxes, self.people, self.person, self.near = [], 0, False, False
+                self.keypoints = []
                 self._recent.clear()
             self.on_update(self.snapshot())
 
@@ -330,6 +336,7 @@ class Vision:
             self.enabled = False
             self.on_update(self.snapshot())
             return
+        self.keypoints = keypoints
         self._note_detection(boxes, frame.shape[0])
         self.on_frame(frame, boxes, keypoints)
 
@@ -343,6 +350,25 @@ class Vision:
                           (163, 192, 92), -1)
             cv2.putText(frame, label, (p1[0] + 3, p1[1] - 4),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, (29, 60, 73), 1, cv2.LINE_AA)
+        self._draw_caps(cv2, frame)
+
+    def _draw_caps(self, cv2, frame):
+        if self.cap is False or not self.keypoints:
+            return
+        if self.cap is None:
+            try:
+                import showercap
+                self.cap = showercap.CapOverlay(cv2)
+                print("vision: shower caps on")
+            except Exception as e:
+                print(f"vision: shower caps off ({e!r})")
+                self.cap = False
+                return
+        try:
+            self.cap.draw(frame, self.keypoints)
+        except Exception as e:
+            print(f"vision: shower cap draw failed, turning caps off ({e!r})")
+            self.cap = False
 
     async def _publish_placeholder(self, text):
         """A visible 'no signal' card, so a dead camera looks dead instead of frozen."""
