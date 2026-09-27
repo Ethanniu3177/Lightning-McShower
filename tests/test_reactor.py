@@ -223,3 +223,17 @@ def test_fudge_lasts_until_the_next_real_reading():
     assert snap["stinky"] and snap["score"] == score >= nose_mod.FUDGE_RANGE[0]
     m.update({"tvoc": 100})
     assert not m.snapshot("x")["stinky"]
+
+
+def test_a_fresh_fudge_reads_clean():
+    m = nose_mod.StinkMeter()
+    m.fudge(nose_mod.FRESH_RANGE[0])
+    snap = m.snapshot("x")
+    assert not snap["stinky"] and snap["score"] == nose_mod.FRESH_RANGE[0]
+
+
+def test_compliment_respects_mute():
+    r = reactor_mod.Reactor(rng=random.Random(0))
+    assert r.compliment(now=T0).tier == "fresh"
+    r.muted = True
+    assert r.compliment(now=T0 + 1) is None

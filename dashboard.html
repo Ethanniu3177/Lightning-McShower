@@ -896,7 +896,6 @@
 
     const bits = [];
     if (n.warming) bits.push(`learning baseline, ${Math.ceil(n.warmup_left || 0)}s left`);
-    bits.push(`source: ${n.source || "none"}`);
     if (n.at) bits.push(`last reading ${new Date(n.at * 1000).toLocaleTimeString()}`);
     $("stink-raw").textContent = bits.join(" · ");
 

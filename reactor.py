@@ -108,6 +108,15 @@ class Reactor:
             self.tier = 0
         return self._fire(self.tier, now, "rated")
 
+    def compliment(self, now=None):
+        """A freshly rated victim the fudger let off: they smell good."""
+        now = time.monotonic() if now is None else now
+        if self.muted:
+            return None
+        r = Reaction(text=self._pick(lines.FRESH), tier="fresh", at=now, reason="rated")
+        self._record(r, now)
+        return r
+
     def manual(self, now=None, text=None):
         """The soap button. Bypasses the person/smell gate but not the mute switch."""
         now = time.monotonic() if now is None else now

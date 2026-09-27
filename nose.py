@@ -48,9 +48,12 @@ FLOOR = {"tvoc": 40.0, "eco2": 420.0, "gas_ohms": 500.0}
 # At the fake source's 0.5 s that is two minutes; on the car's slower poll, longer.
 HISTORY_N = 240
 
-# The real sensor can't reliably smell a person, so a consenting victim is
-# declared stinky by fiat: a random score in this range.
+# The real sensor can't reliably smell a person, so a consenting victim's score is
+# decided by fiat: usually a random stink in FUDGE_RANGE, but FRESH_CHANCE of the
+# time they get a compliment and a score in FRESH_RANGE instead.
 FUDGE_RANGE = (78.0, 99.0)
+FRESH_RANGE = (3.0, 18.0)
+FRESH_CHANCE = 0.25
 
 
 def intensity(raw):
@@ -127,7 +130,7 @@ class StinkMeter:
         return FLOOR.get(self.channel, 1.0)
 
     def fudge(self, score=None):
-        """Pretend the air is foul until the next real reading. Returns the score used."""
+        """Pretend the air scores `score` until the next real reading. Returns it."""
         score = random.uniform(*FUDGE_RANGE) if score is None else float(score)
         self.fudge_score = round(score, 1)
         return self.fudge_score
@@ -143,8 +146,8 @@ class StinkMeter:
     def snapshot(self, source_name):
         fudged = self.fudged
         return {
-            "score": max(round(self.score, 1), self.fudge_score) if fudged else round(self.score, 1),
-            "stinky": self.stinky or fudged,
+            "score": self.fudge_score if fudged else round(self.score, 1),
+            "stinky": self.fudge_score >= STINK_ON if fudged else self.stinky,
             "raw": self.raw,
             "channel": self.channel,
             "baseline": round(self.baseline, 1) if self.baseline else None,

@@ -64,6 +64,14 @@ CONSENT_THANKS = [
     "Wonderful. Initiating nostril protocol.",
 ]
 
+# Spoken after the sniff for the lucky few the fudger decides smell good.
+FRESH = [
+    "Wow. You actually smell great. Like fresh laundry. I am shocked.",
+    "Sniff complete. Verdict: clean. Suspiciously clean. Did you know I was coming?",
+    "Error. No stink detected. You may be the cleanest human I have ever sniffed.",
+    "Mmm, that's lovely. Please teach the others your ways.",
+]
+
 # Spoken when someone already on the board walks back up. No sniff, no asking:
 # they have been rated, so we just remind them where they stand. Filled in with
 # their score and rank, so these go through macOS `say` rather than a cached clip.
@@ -86,5 +94,6 @@ def all_lines():
         out.extend((name, text) for text in tier)
     out.extend(("consent", text) for text in CONSENT)
     out.extend(("thanks", text) for text in CONSENT_THANKS)
+    out.extend(("fresh", text) for text in FRESH)
     out.append(("manual", MANUAL))
     return out

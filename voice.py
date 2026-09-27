@@ -99,6 +99,24 @@ class Voice:
         asyncio.create_task(self._reap(self.proc))
         return backend
 
+    async def play(self, path):
+        """Play a sound file (not a line) and wait for it to finish. False if it didn't play."""
+        path = Path(path)
+        if not self.enabled or self.speaking or not path.exists() or not shutil.which("afplay"):
+            return False
+        try:
+            self.proc = await asyncio.create_subprocess_exec(
+                "afplay", str(path),
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+        except OSError as e:
+            print(f"voice: could not play {path.name} ({e})")
+            return False
+        # Holding self.proc while it plays keeps the next line from talking over it.
+        await self._reap(self.proc)
+        return True
+
     async def _reap(self, proc):
         try:
             await proc.wait()

@@ -68,6 +68,8 @@ REPLY_RE = re.compile(r"^\{(\w+)_(.*)\}$")  # replies look like {<H tag>_<value>
 ENV_POLL_EVERY = 10
 # After a hand goes up: let the thank-you finish before the air "turns" foul.
 FUDGE_DELAY_S = 4.0
+# Played between the thank-you and the roast. Swap in a real recording any time.
+SNIFF_SOUND = Path(__file__).parent / "sounds" / "sniff.wav"
 
 
 def parse_env(value):
@@ -332,17 +334,35 @@ class ShowerBot:
         reaction = self.reactor.thank()
         if reaction:
             self.speak(reaction)
-        # The sensor can't really smell people, so we decide they reek. The air
-        # turns foul only after the thank-you, so the roast doesn't talk over it.
-        score = round(random.uniform(*nose_mod.FUDGE_RANGE), 1)
-        asyncio.get_running_loop().call_later(FUDGE_DELAY_S, self._stink_up, score)
+        # The sensor can't really smell people, so we decide how they smell: mostly
+        # awful, sometimes lovely. The verdict lands only after the thank-you.
+        fresh = random.random() < nose_mod.FRESH_CHANCE
+        score = round(random.uniform(*(nose_mod.FRESH_RANGE if fresh
+                                       else nose_mod.FUDGE_RANGE)), 1)
+        asyncio.create_task(self._sniff(score))
         return score
+
+    async def _sniff(self, score):
+        """Thank-you, then a couple of audible sniffs, then the verdict."""
+        start = time.monotonic()
+        await asyncio.sleep(0.2)            # let the thank-you start playing
+        while self.voice.speaking:
+            await asyncio.sleep(0.1)
+        if not self.reactor.muted:
+            await self.voice.play(SNIFF_SOUND)
+        # No sniff (muted, --no-audio, no afplay): keep the old pacing so the
+        # browser's spoken thank-you isn't cut off by the roast.
+        await asyncio.sleep(max(0.0, FUDGE_DELAY_S - (time.monotonic() - start)))
+        self._stink_up(score)
 
     def _stink_up(self, score):
         # Shows on the dashboard until the next real reading replaces it.
         self.nose.meter.fudge(score)
         self.hub.update(smell=self.nose.snapshot())
-        reaction = self.reactor.roast()
+        if score >= nose_mod.STINK_ON:
+            reaction = self.reactor.roast()
+        else:
+            reaction = self.reactor.compliment()
         if reaction:
             self.speak(reaction)
 
