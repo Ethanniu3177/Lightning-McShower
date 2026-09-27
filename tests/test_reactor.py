@@ -218,18 +218,24 @@ def test_roast_ignores_the_cooldown_but_not_mute():
 
 def test_fudge_lasts_until_the_next_real_reading():
     m = nose_mod.StinkMeter()
-    score = m.fudge()
+    score = m.fudge(80)
     snap = m.snapshot("x")
-    assert snap["stinky"] and snap["score"] == score >= nose_mod.FUDGE_RANGE[0]
+    assert snap["stinky"] and snap["score"] == score == 80
     m.update({"tvoc": 100})
     assert not m.snapshot("x")["stinky"]
 
 
 def test_a_fresh_fudge_reads_clean():
     m = nose_mod.StinkMeter()
-    m.fudge(nose_mod.FRESH_RANGE[0])
+    m.fudge(nose_mod.FUDGE_STINK)             # exactly 40 is not *above* 40
     snap = m.snapshot("x")
-    assert not snap["stinky"] and snap["score"] == nose_mod.FRESH_RANGE[0]
+    assert not snap["stinky"] and snap["score"] == nose_mod.FUDGE_STINK
+
+
+def test_random_fudge_stays_in_range():
+    m = nose_mod.StinkMeter()
+    for _ in range(200):
+        assert nose_mod.FUDGE_RANGE[0] <= m.fudge() <= nose_mod.FUDGE_RANGE[1]
 
 
 def test_compliment_respects_mute():

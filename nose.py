@@ -49,11 +49,10 @@ FLOOR = {"tvoc": 40.0, "eco2": 420.0, "gas_ohms": 500.0}
 HISTORY_N = 240
 
 # The real sensor can't reliably smell a person, so a consenting victim's score is
-# decided by fiat: usually a random stink in FUDGE_RANGE, but FRESH_CHANCE of the
-# time they get a compliment and a score in FRESH_RANGE instead.
-FUDGE_RANGE = (78.0, 99.0)
-FRESH_RANGE = (3.0, 18.0)
-FRESH_CHANCE = 0.25
+# decided by fiat: uniformly random in FUDGE_RANGE. Above FUDGE_STINK they get
+# roasted, otherwise complimented. (The real sensor still uses STINK_ON/OFF.)
+FUDGE_RANGE = (1.0, 100.0)
+FUDGE_STINK = 40.0
 
 
 def intensity(raw):
@@ -147,7 +146,7 @@ class StinkMeter:
         fudged = self.fudged
         return {
             "score": self.fudge_score if fudged else round(self.score, 1),
-            "stinky": self.fudge_score >= STINK_ON if fudged else self.stinky,
+            "stinky": self.fudge_score > FUDGE_STINK if fudged else self.stinky,
             "raw": self.raw,
             "channel": self.channel,
             "baseline": round(self.baseline, 1) if self.baseline else None,

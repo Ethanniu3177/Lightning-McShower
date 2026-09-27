@@ -334,11 +334,9 @@ class ShowerBot:
         reaction = self.reactor.thank()
         if reaction:
             self.speak(reaction)
-        # The sensor can't really smell people, so we decide how they smell: mostly
-        # awful, sometimes lovely. The verdict lands only after the thank-you.
-        fresh = random.random() < nose_mod.FRESH_CHANCE
-        score = round(random.uniform(*(nose_mod.FRESH_RANGE if fresh
-                                       else nose_mod.FUDGE_RANGE)), 1)
+        # The sensor can't really smell people, so we decide how they smell: a
+        # straight roll of the dice. The verdict lands only after the thank-you.
+        score = round(random.uniform(*nose_mod.FUDGE_RANGE), 1)
         asyncio.create_task(self._sniff(score))
         return score
 
@@ -359,7 +357,7 @@ class ShowerBot:
         # Shows on the dashboard until the next real reading replaces it.
         self.nose.meter.fudge(score)
         self.hub.update(smell=self.nose.snapshot())
-        if score >= nose_mod.STINK_ON:
+        if score > nose_mod.FUDGE_STINK:
             reaction = self.reactor.roast()
         else:
             reaction = self.reactor.compliment()

@@ -19,6 +19,7 @@ Two escape hatches keep this developable without the car:
 import asyncio
 import os
 import time
+import traceback
 from collections import deque
 from pathlib import Path
 
@@ -222,16 +223,28 @@ class Vision:
 
     # ---------- the loop ----------
     async def run(self):
+        last_err = None
         while True:
+            started, seq0 = time.monotonic(), self.seq
             try:
                 if self.camera_index is not None:
                     await self._run_webcam()
                 else:
                     await self._run_mjpeg()
+                print(f"vision: camera stream ended cleanly after "
+                      f"{time.monotonic() - started:.1f}s, {self.seq - seq0} frames")
+                last_err = None
             except asyncio.CancelledError:
                 raise
             except Exception as e:
-                print(f"vision: camera loop died ({e!r})")
+                print(f"vision: camera loop died after {time.monotonic() - started:.1f}s, "
+                      f"{self.seq - seq0} frames: {type(e).__module__}.{type(e).__qualname__}: "
+                      f"{e!r}")
+                # Full traceback once per distinct error, so a car that's switched
+                # off doesn't spam a stack every 2s.
+                if repr(e) != last_err:
+                    traceback.print_exc()
+                last_err = repr(e)
             self._set_online(False)
             await self._publish_placeholder("No camera")
             await asyncio.sleep(2)
@@ -243,7 +256,8 @@ class Vision:
             async with session.get(self.camera_url) as resp:
                 resp.raise_for_status()
                 self._set_online(True)
-                print("vision: camera stream open")
+                print(f"vision: camera stream open ({resp.status}, "
+                      f"{resp.headers.get('Content-Type')})")
                 buf = bytearray()
                 async for chunk in resp.content.iter_chunked(4096):
                     buf.extend(chunk)
@@ -261,6 +275,7 @@ class Vision:
                         del buf[:end + 2]
                         await self._handle(jpeg)
                     if len(buf) > MAX_BUFFER:
+                        print(f"vision: lost JPEG sync ({len(buf)} bytes buffered), resyncing")
                         buf.clear()   # lost sync; drop it and resync on the next SOI
 
     async def _run_webcam(self):
