@@ -64,6 +64,20 @@ CONSENT_THANKS = [
     "Wonderful. Initiating nostril protocol.",
 ]
 
+# Spoken when someone already on the board walks back up. No sniff, no asking:
+# they have been rated, so we just remind them where they stand. Filled in with
+# their score and rank, so these go through macOS `say` rather than a cached clip.
+WELCOME_BACK = [
+    "Oh, it's you again. You scored {score} out of 100, number {rank} of {total} on the stink leaderboard.",
+    "Welcome back. My records say {score} out of 100. That puts you number {rank} of {total} on the stink leaderboard.",
+    "I remember you. Number {rank} of {total} on the stink leaderboard, with {score} out of 100.",
+]
+# The same, for whoever is top of the board.
+WELCOME_BACK_TOP = [
+    "Oh, it's you again. {score} out of 100. You are number one on the stink leaderboard. The stinkiest of them all.",
+    "Welcome back, champion. Number one on the stink leaderboard with {score} out of 100. Nobody smells worse.",
+]
+
 
 def all_lines():
     """Every line with its tier name, for the ElevenLabs pre-generation step."""

@@ -168,36 +168,32 @@ def test_warming_up_never_scores():
     assert not m.stinky
 
 
-# ---------- consent: ask once when someone steps close ----------
+# ---------- consent ----------
 
-def test_asks_consent_when_someone_steps_close():
+def test_asks_consent():
     r = make()
-    out = r.ask_consent(near=True, now=T0)
+    out = r.ask_consent(now=T0)
     assert out is not None
     assert out.text in lines.CONSENT
     assert out.tier == "consent"
 
 
-def test_does_not_re_ask_while_still_near():
-    r = make()
-    r.ask_consent(near=True, now=T0)
-    assert r.ask_consent(near=True, now=T0 + 60) is None
-
-
-def test_consent_cooldown_across_approaches():
-    r = make()
-    r.ask_consent(near=True, now=T0)
-    r.ask_consent(near=False, now=T0 + 5)
-    assert r.ask_consent(near=True, now=T0 + 10) is None
-    r.ask_consent(near=False, now=T0 + 20)
-    assert r.ask_consent(near=True, now=T0 + reactor_mod.CONSENT_COOLDOWN_S + 1) is not None
-
-
 def test_muted_means_no_ask_and_no_thanks():
     r = make()
     r.muted = True
-    assert r.ask_consent(near=True, now=T0) is None
+    assert r.ask_consent(now=T0) is None
     assert r.thank(now=T0) is None
+
+
+def test_welcome_back_reads_the_score():
+    r = make()
+    out = r.welcome_back(80.4, rank=2, total=3, now=T0)
+    assert "80 out of 100" in out.text and "number 2 of 3" in out.text
+    assert r.consider(person=True, stinky=True, now=T0 + 1) is not None   # not a roast
+    assert r.welcome_back(97.6, rank=1, total=3, now=T0 + 2).text in [
+        t.format(score=98) for t in lines.WELCOME_BACK_TOP]
+    r.muted = True
+    assert r.welcome_back(90, rank=1, total=1, now=T0 + 3) is None
 
 
 def test_thanks_line():
@@ -208,5 +204,22 @@ def test_thanks_line():
 
 def test_consent_ask_does_not_block_a_roast():
     r = make()
-    r.ask_consent(near=True, now=T0)
+    r.ask_consent(now=T0)
     assert r.consider(person=True, stinky=True, now=T0 + 1) is not None
+
+
+def test_roast_ignores_the_cooldown_but_not_mute():
+    r = make()
+    r.consider(person=True, stinky=True, now=T0)
+    assert r.roast(now=T0 + 1) is not None
+    r.muted = True
+    assert r.roast(now=T0 + 2) is None
+
+
+def test_fudge_lasts_until_the_next_real_reading():
+    m = nose_mod.StinkMeter()
+    score = m.fudge()
+    snap = m.snapshot("x")
+    assert snap["stinky"] and snap["score"] == score >= nose_mod.FUDGE_RANGE[0]
+    m.update({"tvoc": 100})
+    assert not m.snapshot("x")["stinky"]

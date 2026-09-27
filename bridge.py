@@ -23,6 +23,7 @@ No car? No sensor? The whole pipeline still runs:
 import argparse
 import asyncio
 import json
+import random
 import re
 import time
 from pathlib import Path
@@ -65,6 +66,8 @@ REPLY_RE = re.compile(r"^\{(\w+)_(.*)\}$")  # replies look like {<H tag>_<value>
 # BME688 poll (patched firmware, N=24): every this many ultrasonic polls, ~3 s.
 # The firmware only samples every 3 s, so asking faster just repeats a reading.
 ENV_POLL_EVERY = 10
+# After a hand goes up: let the thank-you finish before the air "turns" foul.
+FUDGE_DELAY_S = 4.0
 
 
 def parse_env(value):
@@ -271,12 +274,17 @@ class ShowerBot:
         self.nose = nose
         self.reactor = reactor
         self.voice = voice
+        self.was_near = False
+        self.welcomed = set()      # board ids already greeted this visit
+        self.ask_by_face = False   # set once face capture is up
         hub.update(voice=voice.backend, vision=vis.snapshot())
 
     # Both callbacks are sync -- they are called from vision/nose internals.
     def on_vision(self, snap):
         self.hub.update(people=snap["people"], person=snap["person"],
                         near=snap.get("near", False), vision=snap)
+        if not snap["person"]:
+            self.welcomed.clear()   # everyone left: the next visit gets a fresh hello
         self.evaluate()
 
     def on_smell(self, snap):
@@ -284,12 +292,15 @@ class ShowerBot:
         self.evaluate()
 
     def evaluate(self):
-        # Someone just stepped close: ask before anything else, so a roast can't
-        # talk over the consent prompt.
-        ask = self.reactor.ask_consent(self.hub.state["near"])
-        if ask:
-            self.speak(ask)
-            return
+        near = self.hub.state["near"]
+        arrived, self.was_near = near and not self.was_near, near
+        # Without face capture we can't tell who's been rated: ask whoever steps
+        # close. With it, ask_unrated() does the asking instead.
+        if arrived and not self.ask_by_face:
+            ask = self.reactor.ask_consent()
+            if ask:
+                self.speak(ask)
+                return   # a roast can't talk over the consent prompt
         reaction = self.reactor.consider(
             person=self.hub.state["person"],
             stinky=self.hub.state["smell"]["stinky"],
@@ -297,8 +308,41 @@ class ShowerBot:
         if reaction:
             self.speak(reaction)
 
+    def ask_unrated(self):
+        """Face capture saw someone not on the board yet. Returns True if we asked."""
+        if not self.hub.state["near"]:
+            return False
+        ask = self.reactor.ask_consent()
+        if ask:
+            self.speak(ask)
+        return ask is not None
+
+    def rated_seen(self, entry, rank, total):
+        """Someone already on the board is in view: tell them their rank, once per visit."""
+        if not self.hub.state["near"] or entry["id"] in self.welcomed:
+            return
+        reaction = self.reactor.welcome_back(entry["peak_score"], rank, total)
+        if reaction:
+            print(f"faces: {entry['id']} is back (#{rank} of {total}, {entry['peak_score']})")
+            self.welcomed.add(entry["id"])
+            self.speak(reaction)
+
     def consented(self):
+        """A hand went up. Returns the score to put them on the leaderboard with."""
         reaction = self.reactor.thank()
+        if reaction:
+            self.speak(reaction)
+        # The sensor can't really smell people, so we decide they reek. The air
+        # turns foul only after the thank-you, so the roast doesn't talk over it.
+        score = round(random.uniform(*nose_mod.FUDGE_RANGE), 1)
+        asyncio.get_running_loop().call_later(FUDGE_DELAY_S, self._stink_up, score)
+        return score
+
+    def _stink_up(self, score):
+        # Shows on the dashboard until the next real reading replaces it.
+        self.nose.meter.fudge(score)
+        self.hub.update(smell=self.nose.snapshot())
+        reaction = self.reactor.roast()
         if reaction:
             self.speak(reaction)
 
@@ -539,7 +583,10 @@ def main():
             score_fn=lambda: hub.state["smell"]["score"],
             on_change=lambda rows: hub.event({"type": "leaderboard", "entries": rows}),
             on_consent=bot.consented,
+            on_unrated=bot.ask_unrated,
+            on_rated=bot.rated_seen,
         )
+        bot.ask_by_face = True
         vis.on_frame = capturer.on_frame
     nose.on_update = bot.on_smell
     bot.nose = nose

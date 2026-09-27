@@ -6,8 +6,8 @@ turns it into a 128-number fingerprint (OpenCV's SFace). If the fingerprint is
 close to someone we already have, it is the same person: we bump their score
 instead of adding a duplicate. Otherwise they get a new row on the board.
 
-No face, no capture. The camera rides low on the car, so plenty of frames show a
-chin or a torso; skipping those is what keeps the board free of junk and repeats.
+No face, no capture. Frames where a person's face is turned away or too small to
+fingerprint are skipped; that is what keeps the board free of junk and repeats.
 
 Nobody goes on the board without saying yes. A new face waits in memory -- never on
 disk -- until that person raises a hand above their head for about a second (YOLO
@@ -41,16 +41,17 @@ RECENT_S = 3.0
 
 MIN_FACE_PX = 28          # smaller faces embed too noisily to trust; the ESP32-CAM
                           # frame is small, so a person a few metres off is ~30 px
-FACE_SCORE = 0.8          # YuNet confidence
+FACE_SCORE = 0.6          # YuNet confidence
 CAPTURE_INTERVAL = 0.5    # seconds between face passes; YOLO already runs far more often
 
-# Consent: a hand above the head in this many face passes in a row (~1 s at 0.5 s).
-CONSENT_PASSES = 2
+# Consent: a hand up in this many face passes in a row (0.5 s each).
+CONSENT_PASSES = 1
 # How long a face that hasn't said yes is remembered (in memory only) after last seen.
 PENDING_TTL = 30.0
 
-KP_CONF = 0.5
-NOSE, L_SHOULDER, R_SHOULDER, L_WRIST, R_WRIST = 0, 5, 6, 9, 10
+# Low on purpose: a raised wrist is small and often blurry.
+KP_CONF = 0.3
+NOSE, L_SHOULDER, R_SHOULDER, L_ELBOW, R_ELBOW, L_WRIST, R_WRIST = 0, 5, 6, 7, 8, 9, 10
 
 
 def normalise(vec):
@@ -234,6 +235,11 @@ class Leaderboard:
                       key=lambda e: (-e["peak_score"], e["first_seen"]))
         return [self.public(e) for e in rows]
 
+    def rank(self, id_):
+        """(1-based position, board size) -- same order as ranked()."""
+        ids = [e["id"] for e in self.ranked()]
+        return ids.index(id_) + 1, len(ids)
+
 
 # ---------------------------------------------------------------------------
 # Consent: faces wait here, in memory only, until their owner raises a hand
@@ -254,7 +260,8 @@ class Waitlist:
         if id_ is None:
             id_ = uuid.uuid4().hex[:10]
             self.rows[id_] = {"embedding": [float(x) for x in normalise(vec)],
-                              "jpeg": jpeg, "peak_score": score, "streak": 0}
+                              "jpeg": jpeg, "peak_score": score, "streak": 0,
+                              "asked": False}
         row = self.rows[id_]
         row["last_seen"] = now
         if score > row["peak_score"]:
@@ -265,24 +272,31 @@ class Waitlist:
             return self.rows.pop(id_)
         return None
 
+    def row_for(self, vec):
+        id_ = closest(vec, self.rows, self.clock())
+        return None if id_ is None else self.rows[id_]
+
     def __len__(self):
         return len(self.rows)
 
 
 def hand_raised(xy, conf):
-    """Is either wrist above the nose? xy is (17, 2) COCO keypoints, conf is (17,)."""
-    wrists = [xy[i][1] for i in (L_WRIST, R_WRIST) if conf[i] >= KP_CONF]
-    if not wrists:
+    """Is a wrist or elbow above the shoulders? xy is (17, 2) COCO keypoints, conf (17,).
+
+    Elbows count too: a raised wrist is small and motion-blurred, so the pose
+    model often loses it while still placing the elbow confidently.
+    """
+    joints = [xy[i][1] for i in (L_WRIST, R_WRIST, L_ELBOW, R_ELBOW) if conf[i] >= KP_CONF]
+    if not joints:
         return False
-    if conf[NOSE] >= KP_CONF:
+    shoulders = [xy[i][1] for i in (L_SHOULDER, R_SHOULDER) if conf[i] >= KP_CONF]
+    if shoulders:
+        line = min(shoulders)
+    elif conf[NOSE] >= KP_CONF:
         line = xy[NOSE][1]
-    elif conf[L_SHOULDER] >= KP_CONF and conf[R_SHOULDER] >= KP_CONF:
-        # Face turned away: call head height half a shoulder-width above the shoulders.
-        span = abs(xy[L_SHOULDER][0] - xy[R_SHOULDER][0])
-        line = min(xy[L_SHOULDER][1], xy[R_SHOULDER][1]) - span / 2
     else:
         return False
-    return bool(min(wrists) < line)   # image y grows downward
+    return bool(min(joints) < line)   # image y grows downward
 
 
 def raised_for(centre, poses):
@@ -318,16 +332,21 @@ class Capturer:
     """Throttled face pass over vision's frames. Never blocks the event loop."""
 
     def __init__(self, embedder, board, score_fn, on_change=None, waitlist=None,
-                 on_consent=None):
+                 on_consent=None, on_unrated=None, on_rated=None):
         self.embedder = embedder
         self.board = board
         self.waitlist = waitlist or Waitlist()
         self.score_fn = score_fn
         self.on_change = on_change or (lambda *_: None)
         self.on_consent = on_consent or (lambda *_: None)
+        # Called for a face not on the board yet; returns True if it asked them.
+        self.on_unrated = on_unrated or (lambda *_: False)
+        # Called with (board entry, rank, board size) for each face already on the board.
+        self.on_rated = on_rated or (lambda *_: None)
         self.enabled = True
         self._last = 0.0
         self._task = None
+        self._faceless_hand = False
 
     def on_frame(self, frame, boxes, keypoints):
         """Called from vision after each YOLO pass, with a private copy of the frame."""
@@ -353,18 +372,35 @@ class Capturer:
         score = self.score_fn()
         changed = False
         poses = poses_from(boxes, keypoints)
+        # A hand is up but no face was usable: consent can't register. Say so once.
+        faceless = any(raised and not any(x1 <= c[0] <= x2 and y1 <= c[1] <= y2
+                                          for _, _, c in faces)
+                       for (x1, y1, x2, y2), _, raised in poses)
+        if faceless and not self._faceless_hand:
+            print(f"faces: hand up but no usable face (need >= {MIN_FACE_PX}px, "
+                  f"YuNet >= {FACE_SCORE}) -- step closer or face the camera")
+        self._faceless_hand = faceless
         for vec, jpeg, centre in faces:
             try:
                 if self.board.match(vec) is not None:
-                    _, c = self.board.observe(vec, jpeg, score)   # already said yes
+                    # Already rated: never asked or sniffed again.
+                    entry, c = self.board.observe(vec, jpeg, score)
                     changed = changed or c
+                    self.on_rated(entry, *self.board.rank(entry["id"]))
                     continue
                 ready = self.waitlist.see(vec, jpeg, score, raised_for(centre, poses))
                 if ready:
                     print("faces: hand up -- adding them to the leaderboard")
-                    self.on_consent()
-                    self.board.observe(ready["embedding"], ready["jpeg"], ready["peak_score"])
+                    # on_consent may hand back a (fudged) score to file them under.
+                    score = self.on_consent()
+                    peak = max(ready["peak_score"], score or 0)
+                    self.board.observe(ready["embedding"], ready["jpeg"], peak)
                     changed = True
+                    continue
+                # Not rated yet: ask once, however long they hang around.
+                row = self.waitlist.row_for(vec)
+                if row and not row["asked"] and self.on_unrated():
+                    row["asked"] = True
             except Exception as e:
                 print(f"faces: could not record a face ({e!r})")
         if changed:

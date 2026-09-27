@@ -48,6 +48,10 @@ FLOOR = {"tvoc": 40.0, "eco2": 420.0, "gas_ohms": 500.0}
 # At the fake source's 0.5 s that is two minutes; on the car's slower poll, longer.
 HISTORY_N = 240
 
+# The real sensor can't reliably smell a person, so a consenting victim is
+# declared stinky by fiat: a random score in this range.
+FUDGE_RANGE = (78.0, 99.0)
+
 
 def intensity(raw):
     """Collapse a reading dict to one 'how bad is it' number, higher = worse.
@@ -77,6 +81,7 @@ class StinkMeter:
         self.stinky = False
         self.raw = {}
         self.at = None       # wall-clock time of the last reading, for the live chart
+        self.fudge_score = None   # set by fudge(), cleared by the next real reading
 
     @property
     def warming(self):
@@ -93,6 +98,7 @@ class StinkMeter:
         channel, value = intensity(raw)
         if value is None:
             return False
+        self.fudge_score = None
         self.raw = dict(raw)
         self.channel = channel
         self.at = time.time()
@@ -120,23 +126,35 @@ class StinkMeter:
     def _floor(self):
         return FLOOR.get(self.channel, 1.0)
 
+    def fudge(self, score=None):
+        """Pretend the air is foul until the next real reading. Returns the score used."""
+        score = random.uniform(*FUDGE_RANGE) if score is None else float(score)
+        self.fudge_score = round(score, 1)
+        return self.fudge_score
+
+    @property
+    def fudged(self):
+        return self.fudge_score is not None
+
     def recalibrate(self):
         """Forget the baseline and warm up again -- e.g. after moving rooms."""
         self.__init__()
 
     def snapshot(self, source_name):
+        fudged = self.fudged
         return {
-            "score": round(self.score, 1),
-            "stinky": self.stinky,
+            "score": max(round(self.score, 1), self.fudge_score) if fudged else round(self.score, 1),
+            "stinky": self.stinky or fudged,
             "raw": self.raw,
             "channel": self.channel,
             "baseline": round(self.baseline, 1) if self.baseline else None,
-            "warming": self.warming,
+            "warming": self.warming and not fudged,
             "warmup_left": round(self.warmup_left, 1),
             "source": source_name,
             "at": self.at,
             "stink_on": STINK_ON,
             "stink_off": STINK_OFF,
+            "fudged": fudged,
         }
 
 

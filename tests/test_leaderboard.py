@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -110,6 +111,14 @@ def test_ranked_stinkiest_first(tmp_path):
     assert [r["peak_score"] for r in b.ranked()] == [90, 60, 30]
 
 
+def test_rank_matches_the_board_order(tmp_path):
+    b = make(tmp_path)
+    low, _ = b.observe(axis(0), b"a", 30)
+    top, _ = b.observe(axis(1), b"b", 90)
+    assert b.rank(top["id"]) == (1, 2)
+    assert b.rank(low["id"]) == (2, 2)
+
+
 def test_public_rows_have_no_embeddings(tmp_path):
     b = make(tmp_path)
     b.observe(axis(0), b"a", 30)
@@ -152,6 +161,17 @@ def test_unreadable_json_starts_fresh(tmp_path):
 
 def waitlist(clock=None):
     return faces.Waitlist(clock=clock or Clock())
+
+
+@pytest.fixture(autouse=True)
+def two_passes(monkeypatch):
+    # The streak logic is easier to see with two; the default is one.
+    monkeypatch.setattr(faces, "CONSENT_PASSES", 2)
+
+
+def test_default_is_one_pass(monkeypatch):
+    monkeypatch.setattr(faces, "CONSENT_PASSES", 1)
+    assert waitlist().see(axis(0), b"a", 20, raised=True) is not None
 
 
 def test_no_hand_never_joins():
@@ -207,7 +227,7 @@ def test_nothing_touches_disk_before_consent(tmp_path):
     assert len(b.entries) == 1
 
 
-def kps(nose=None, shoulders=None, wrists=()):
+def kps(nose=None, shoulders=None, wrists=(), elbows=()):
     xy, conf = np.zeros((17, 2)), np.zeros(17)
     if nose:
         xy[faces.NOSE], conf[faces.NOSE] = nose, 0.9
@@ -215,6 +235,9 @@ def kps(nose=None, shoulders=None, wrists=()):
         for i, p in zip((faces.L_SHOULDER, faces.R_SHOULDER), shoulders):
             xy[i], conf[i] = p, 0.9
     for i, p in zip((faces.L_WRIST, faces.R_WRIST), wrists):
+        if p:
+            xy[i], conf[i] = p, 0.9
+    for i, p in zip((faces.L_ELBOW, faces.R_ELBOW), elbows):
         if p:
             xy[i], conf[i] = p, 0.9
     return xy, conf
@@ -230,11 +253,18 @@ def test_hands_down_or_at_chest_are_not():
     assert not faces.hand_raised(*kps(nose=(100, 100)))                    # no wrists seen
 
 
-def test_face_turned_away_falls_back_to_shoulders():
-    # Shoulders at y=150, 80 px apart: head line is y=110.
-    assert faces.hand_raised(*kps(shoulders=[(60, 150), (140, 150)], wrists=[(60, 90)]))
-    assert not faces.hand_raised(*kps(shoulders=[(60, 150), (140, 150)], wrists=[(60, 130)]))
+def test_above_the_shoulders_counts():
+    sh = [(60, 150), (140, 150)]
+    assert faces.hand_raised(*kps(shoulders=sh, wrists=[(60, 130)]))
+    assert faces.hand_raised(*kps(shoulders=[(60, 150)], wrists=[(60, 130)]))  # one shoulder
+    assert not faces.hand_raised(*kps(shoulders=sh, wrists=[(60, 170)]))
     assert not faces.hand_raised(*kps(wrists=[(60, 10)]))                  # no reference
+
+
+def test_elbow_up_counts_when_the_hand_is_out_of_frame():
+    sh = [(60, 150), (140, 150)]
+    assert faces.hand_raised(*kps(shoulders=sh, elbows=[(40, 110)]))
+    assert not faces.hand_raised(*kps(shoulders=sh, elbows=[(40, 200)]))
 
 
 def test_the_hand_belongs_to_the_face_it_is_attached_to():
