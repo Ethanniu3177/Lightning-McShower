@@ -321,12 +321,6 @@
   .sense { grid-area: sense; }
   .reading { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; font-weight: 600; }
   .reading strong { font-family: var(--serif); font-size: 1.6rem; font-weight: 600; font-variant-numeric: tabular-nums; }
-  .line { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 18px; }
-  .line div {
-    border-radius: 12px; padding: 8px; text-align: center; background: #F4F2EC;
-    font-size: 0.8rem; font-weight: 600; letter-spacing: 0.04em; color: var(--ink-soft);
-  }
-  .line b { display: block; font-family: var(--serif); font-size: 1.25rem; font-weight: 600; color: var(--ink); font-variant-numeric: tabular-nums; letter-spacing: 0; }
 
   /* Nose */
   .nose { grid-area: nose; }
@@ -589,11 +583,6 @@
     <h2><span class="tag"><svg class="ico" aria-hidden="true"><use href="#i-drop"/></svg>Sensors</span></h2>
     <div class="reading"><span>Nearest object</span><strong id="dist">—</strong></div>
     <div class="meter" id="meter"><span id="meter-fill"></span></div>
-    <div class="line" aria-label="Floor sensors">
-      <div>Left<b id="l0">—</b></div>
-      <div>Middle<b id="l1">—</b></div>
-      <div>Right<b id="l2">—</b></div>
-    </div>
   </section>
 
   <section class="panel nose" id="nose" data-s="warming" aria-label="Smell sensor">
@@ -816,8 +805,6 @@
     const closeness = valid ? Math.max(0, Math.min(1, 1 - d / 150)) : 0;
     $("meter-fill").style.width = `${closeness * 100}%`;
     $("meter").classList.toggle("close", valid && d <= CLOSE_CM);
-
-    s.line.forEach((v, i) => { $(`l${i}`).textContent = v ?? "—"; });
 
     renderVision(s);
     renderNose(s.smell || {});
