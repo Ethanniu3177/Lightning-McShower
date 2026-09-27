@@ -59,7 +59,7 @@ Lightning McShower is an ELEGOO robot car with a camera, a gas sensor and no fil
 - **The camera only serves one viewer.** Our first dashboard used the stream directly, which left Python with no frames for YOLO. We fixed it by proxying the stream through the bridge.
 - **The Apple GPU backend isn't thread-safe.** Two YOLO predictions running at once crashed the process with a Metal assertion. Now only one inference runs at a time and extra frames are dropped, never queued. That also protects the car link: the event loop must never block, because the car disconnects after three missed heartbeats.
 - **Gas sensors drift, and every room smells different.** An absolute threshold that works in a clean lab is useless at hour 30 of a hackathon. Scoring against a baseline plus hysteresis fixed that.
-- **The camera sits about 10 cm off the floor.** Many frames show only a chin or a torso. We only record someone when an actual face is found and is big enough to fingerprint reliably.
+- **The camera sits about 10 cm off the floor.** Many frames show only a chin or a torso. We only record someone when an actual face is found and is big enough to fingerprint reliably. To fix this, we found some PVC pipe laying around the event and stuck the camera and sniffer on top.
 - **Opting in has to work from a low, cheap camera.** A thumbs-up is only a few pixels at that range, so we use a raised arm held for about a second. A wave as someone walks past doesn't count.
 
 ## Accomplishments that we're proud of
