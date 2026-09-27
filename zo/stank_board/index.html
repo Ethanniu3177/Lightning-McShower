@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stank Board</title>
+<style>
+  :root {
+    --tile: #EAF4F4;
+    --grout: #C9DADB;
+    --surface: #FFFFFF;
+    --ink: #0B3C49;
+    --ink-soft: #4F7480;
+    --rinse: #2B8CA3;
+    --soap: #F4B6C2;
+    --soap-ink: #5A1E2B;
+    --warn: #C8553D;
+    --fresh: #2E8B57;
+    --font: "Avenir Next", "Segoe UI Variable Display", "Segoe UI", Ubuntu, "Helvetica Neue", system-ui, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --tile: #0F2229;
+      --grout: #1B3842;
+      --surface: #132C34;
+      --ink: #E3F1F2;
+      --ink-soft: #9BBBC3;
+      --rinse: #5CC0D6;
+      --soap: #F4B6C2;
+      --soap-ink: #4A1824;
+      --warn: #F08A70;
+      --fresh: #6FD19A;
+    }
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    font-family: var(--font);
+    color: var(--ink);
+    line-height: 1.45;
+    min-height: 100vh;
+    background-color: var(--tile);
+    background-image:
+      linear-gradient(var(--grout) 2px, transparent 2px),
+      linear-gradient(90deg, var(--grout) 2px, transparent 2px);
+    background-size: 48px 48px;
+  }
+  .wrap { max-width: 1100px; margin: 0 auto; padding: 24px 16px 40px; }
+
+  header { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: 12px; margin-bottom: 20px; }
+  h1 { margin: 0; font-size: clamp(2rem, 6vw, 3.4rem); letter-spacing: -0.02em; line-height: 1; }
+  .sub { margin: 6px 0 0; color: var(--ink-soft); font-size: 1.05rem; }
+  .live {
+    display: inline-flex; align-items: center; gap: 8px;
+    background: var(--surface); border: 2px solid var(--grout); border-radius: 999px;
+    padding: 6px 14px; font-weight: 600; font-size: 0.95rem;
+  }
+  .live i { width: 10px; height: 10px; border-radius: 50%; background: var(--ink-soft); }
+  .live[data-s="on"] i { background: var(--fresh); box-shadow: 0 0 0 4px color-mix(in srgb, var(--fresh) 25%, transparent); }
+  .live[data-s="off"] i { background: var(--warn); }
+
+  .grid { display: grid; gap: 18px; grid-template-columns: minmax(0, 1.7fr) minmax(280px, 1fr); }
+  @media (max-width: 800px) { .grid { grid-template-columns: 1fr; } }
+  .panel { background: var(--surface); border: 2px solid var(--grout); border-radius: 18px; padding: 18px; }
+  h2 { margin: 0 0 12px; font-size: 1.1rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--ink-soft); }
+
+  ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+  .row {
+    display: grid; grid-template-columns: 2.4rem minmax(0, 1fr) auto; gap: 12px; align-items: center;
+    padding: 12px; border-radius: 14px; background: var(--tile);
+  }
+  .row.new { animation: splash 1.2s ease-out; }
+  @keyframes splash { from { background: var(--soap); } }
+  .rank { font-size: 1.4rem; font-weight: 800; text-align: center; color: var(--ink-soft); }
+  .row:nth-child(1) .rank { color: var(--warn); }
+  .who { min-width: 0; }
+  .alias { font-weight: 700; font-size: 1.1rem; }
+  .roast { color: var(--ink-soft); font-size: 0.95rem; overflow-wrap: anywhere; }
+  .tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+  .tag { font-size: 0.75rem; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--grout); color: var(--ink-soft); }
+  .score { text-align: right; }
+  .num { font-size: 1.8rem; font-weight: 800; font-variant-numeric: tabular-nums; line-height: 1; }
+  .tier { font-size: 0.75rem; font-weight: 700; padding: 2px 8px; border-radius: 999px; display: inline-block; margin-top: 4px; white-space: nowrap; }
+  .tier[data-t="Fresh"] { background: color-mix(in srgb, var(--fresh) 20%, transparent); color: var(--fresh); }
+  .tier[data-t="Questionable"] { background: color-mix(in srgb, var(--rinse) 20%, transparent); color: var(--rinse); }
+  .tier[data-t="Shower Recommended"] { background: var(--soap); color: var(--soap-ink); }
+  .tier[data-t="Code Brown Alert"] { background: var(--warn); color: var(--surface); }
+
+  .feed li { padding: 10px 0; border-bottom: 1px solid var(--grout); }
+  .feed li:last-child { border-bottom: 0; }
+  .feed .when { font-size: 0.8rem; color: var(--ink-soft); }
+  .empty { color: var(--ink-soft); padding: 12px 0; }
+  footer { margin-top: 20px; color: var(--ink-soft); font-size: 0.85rem; text-align: center; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <h1>⚡🚿 Stank Board</h1>
+      <p class="sub">ShowerBot's verdicts, ranked by stank confidence. <span id="total"></span></p>
+    </div>
+    <div class="live" id="live" data-s="wait"><i></i><span id="live-text">Connecting…</span></div>
+  </header>
+
+  <div class="grid">
+    <section class="panel" aria-label="Leaderboard">
+      <h2>Most in need of a shower</h2>
+      <ol id="top"></ol>
+    </section>
+    <section class="panel" aria-label="Latest roasts">
+      <h2>Latest roasts</h2>
+      <ol id="latest" class="feed"></ol>
+    </section>
+  </div>
+
+  <footer>Comedy hack from Shower Hacks 2026. Everyone on here opted in, and no images are stored. Want off the board? Ask the Lightning McShower team.</footer>
+</div>
+
+<script>
+  const REFRESH_MS = 3000;
+  const $ = (id) => document.getElementById(id);
+  let seen = new Set();
+  let firstLoad = true;
+
+  function el(tag, cls, text) {
+    const e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text != null) e.textContent = text;
+    return e;
+  }
+
+  function ago(ts) {
+    const s = Math.max(0, Math.round(Date.now() / 1000 - ts));
+    if (s < 60) return `${s}s ago`;
+    if (s < 3600) return `${Math.round(s / 60)}m ago`;
+    return `${Math.round(s / 3600)}h ago`;
+  }
+
+  function tierBadge(tier) {
+    const t = el("span", "tier", tier);
+    t.dataset.t = tier;
+    return t;
+  }
+
+  function renderTop(rows) {
+    const list = $("top");
+    list.replaceChildren();
+    if (!rows.length) {
+      list.append(el("li", "empty", "Nobody judged yet. ShowerBot is warming up its nose."));
+      return;
+    }
+    rows.forEach((v, i) => {
+      const li = el("li", "row");
+      if (!firstLoad && !seen.has(v.event_id)) li.classList.add("new");
+      const who = el("div", "who");
+      who.append(el("div", "alias", v.alias));
+      if (v.roast_line) who.append(el("div", "roast", `"${v.roast_line}"`));
+      if (v.evidence.length) {
+        const tags = el("div", "tags");
+        v.evidence.forEach((t) => tags.append(el("span", "tag", t)));
+        who.append(tags);
+      }
+      const score = el("div", "score");
+      score.append(el("div", "num", v.score), tierBadge(v.tier));
+      li.append(el("div", "rank", i + 1), who, score);
+      list.append(li);
+    });
+  }
+
+  function renderLatest(rows) {
+    const list = $("latest");
+    list.replaceChildren();
+    if (!rows.length) {
+      list.append(el("li", "empty", "Waiting for the first roast…"));
+      return;
+    }
+    rows.forEach((v) => {
+      const li = el("li");
+      const head = el("div");
+      head.append(el("strong", null, `${v.alias} `), tierBadge(v.tier));
+      li.append(head);
+      if (v.roast_line) li.append(el("div", "roast", `"${v.roast_line}"`));
+      li.append(el("div", "when", `${v.score}/100 · ${ago(v.ts)}`));
+      list.append(li);
+    });
+  }
+
+  function renderLive(car) {
+    const live = $("live");
+    if (car.live) { live.dataset.s = "on"; $("live-text").textContent = "ShowerBot is on patrol"; }
+    else if (car.bridge_online) { live.dataset.s = "off"; $("live-text").textContent = "ShowerBot is parked"; }
+    else { live.dataset.s = "off"; $("live-text").textContent = "ShowerBot is offline"; }
+  }
+
+  async function refresh() {
+    try {
+      const r = await fetch("api/board?limit=15", { cache: "no-store" });
+      const data = await r.json();
+      renderTop(data.top);
+      renderLatest(data.latest);
+      renderLive(data.car);
+      $("total").textContent = `${data.total} judged so far.`;
+      seen = new Set([...data.top, ...data.latest].map((v) => v.event_id));
+      firstLoad = false;
+    } catch {
+      $("live").dataset.s = "off";
+      $("live-text").textContent = "Board unreachable, retrying…";
+    }
+  }
+
+  refresh();
+  setInterval(refresh, REFRESH_MS);
+</script>
+</body>
+</html>

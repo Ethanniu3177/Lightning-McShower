@@ -19,10 +19,14 @@ Audio clips: drop .m4a / .mp3 / .wav files into the "clips" folder next to this
 file, or drag them onto the dashboard. The laptop plays them.
 No car? No sensor? The whole pipeline still runs:
      python bridge.py --camera 0 --smell fake
+
+Public Stank Board on Zo (optional): set ZO_BOARD_URL and ZO_INGEST_KEY (in the
+environment or .env) and the leaderboard is mirrored there, text only.
 """
 import argparse
 import asyncio
 import json
+import os
 import re
 import time
 from pathlib import Path
@@ -34,6 +38,13 @@ import nose as nose_mod
 import reactor as reactor_mod
 import vision as vision_mod
 import voice as voice_mod
+import zoboard as zoboard_mod
+
+try:
+    from dotenv import load_dotenv
+    load_dotenv(Path(__file__).parent / ".env")
+except ImportError:
+    pass  # python-dotenv is optional; plain environment variables work too
 
 CAR_HOST = "192.168.4.1"
 CAR_PORT = 100
@@ -271,6 +282,7 @@ class ShowerBot:
         self.nose = nose
         self.reactor = reactor
         self.voice = voice
+        self.last_roast = ""  # last automatic roast, shown on the Zo board
         hub.update(voice=voice.backend, vision=vis.snapshot())
 
     # Both callbacks are sync -- they are called from vision/nose internals.
@@ -309,6 +321,8 @@ class ShowerBot:
 
     def speak(self, reaction):
         payload = reaction.as_dict()
+        if reaction.reason == "auto":
+            self.last_roast = reaction.text
         self.hub.update(last_reaction=payload)
         self.hub.event({"type": "reaction", **payload})
         asyncio.create_task(self._say(payload))
@@ -348,7 +362,7 @@ def safe_name(name):
     return candidate
 
 
-def make_app(car, bot, hub, source, board):
+def make_app(car, bot, hub, source, board, zo):
     async def index(request):
         return web.FileResponse(HERE / "dashboard.html")
 
@@ -362,6 +376,7 @@ def make_app(car, bot, hub, source, board):
         if not board.delete(request.match_info["id"]):
             return web.json_response({"error": "no such entry"}, status=404)
         hub.event({"type": "leaderboard", "entries": board.ranked()})
+        zo.remove(request.match_info["id"])
         return web.json_response({"ok": True})
 
     async def stream(request):
@@ -460,7 +475,9 @@ def make_app(car, bot, hub, source, board):
     async def start(app):
         board.load()
         print(f"Leaderboard loaded: {len(board.entries)} people")
+        zo.sync(board.ranked())
         app["tasks"] = [
+            asyncio.create_task(zo.run()),
             asyncio.create_task(hub.broadcast_loop()),
             asyncio.create_task(car.run()),
             asyncio.create_task(bot.vision.run()),
@@ -529,6 +546,10 @@ def main():
     vis.on_update = bot.on_vision
 
     board = faces_mod.Leaderboard()
+    zo = zoboard_mod.ZoBoard(
+        os.environ.get("ZO_BOARD_URL"), os.environ.get("ZO_INGEST_KEY"),
+        status_fn=lambda: {"connected": hub.state["connected"], "distance": hub.state["distance"]},
+    )
     capture_on, why = faces_mod.probe(use_yolo and not args.no_capture, args.model)
     if not use_yolo and not args.no_capture:
         why = "needs person detection"
@@ -537,7 +558,8 @@ def main():
         capturer = faces_mod.Capturer(
             faces_mod.FaceEmbedder(), board,
             score_fn=lambda: hub.state["smell"]["score"],
-            on_change=lambda rows: hub.event({"type": "leaderboard", "entries": rows}),
+            on_change=lambda rows: (hub.event({"type": "leaderboard", "entries": rows}),
+                                    zo.sync(rows, bot.last_roast)),
             on_consent=bot.consented,
         )
         vis.on_frame = capturer.on_frame
@@ -547,7 +569,7 @@ def main():
 
     print(f"Dashboard: http://localhost:{args.port}")
     print(f"Leaderboard: http://localhost:{args.port}/leaderboard")
-    web.run_app(make_app(car, bot, hub, source, board),
+    web.run_app(make_app(car, bot, hub, source, board, zo),
                 host=args.bind, port=args.port, print=None)
 
 

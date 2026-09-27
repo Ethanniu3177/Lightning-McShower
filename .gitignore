@@ -18,3 +18,6 @@ audio/*.aiff
 
 # Leaderboard photos + face fingerprints. These are people's faces: never commit them.
 captures/
+
+# Stank Board database (the Zo service keeps its own copy).
+*.db
