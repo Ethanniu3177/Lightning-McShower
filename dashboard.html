@@ -351,6 +351,34 @@
   .verdict[data-s="foul"] { color: var(--red); animation: shudder 0.5s ease-in-out infinite; }
   @keyframes shudder { 0%, 100% { transform: rotate(0); } 25% { transform: rotate(-3deg); } 75% { transform: rotate(3deg); } }
   .raw { font-size: 0.83rem; color: var(--ink-soft); margin: 10px 0 0; font-variant-numeric: tabular-nums; }
+
+  /* Live readouts: one tile per number the sensor sends. */
+  .readouts { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 8px; margin: 14px 0 0; }
+  .readouts div { background: var(--cream); border: 1px solid var(--line); border-radius: 10px; padding: 6px 10px; min-width: 0; }
+  .readouts dt { font-size: 0.7rem; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-soft); }
+  .readouts dd { margin: 2px 0 0; font-family: var(--serif); font-size: 1.25rem; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .readouts dd small { font-family: var(--font); font-size: 0.72rem; font-weight: 500; color: var(--ink-soft); margin-left: 3px; }
+  .readouts dd.bump { animation: bump 0.4s ease-out; }
+  @keyframes bump { from { color: var(--sage-deep); } }
+
+  /* Live chart of the stink score. */
+  .smell-chart { margin: 14px 0 0; }
+  .smell-chart figcaption { font-size: 0.75rem; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-soft); margin-bottom: 6px; }
+  .smell-chart .plot { position: relative; height: 120px; }
+  .smell-chart svg { display: block; width: 100%; height: 100%; overflow: visible; }
+  .smell-chart .grid line { stroke: var(--line); stroke-width: 1; }
+  .smell-chart .grid text, .smell-chart .thresh-label { font-size: 10px; fill: var(--ink-soft); font-family: var(--font); }
+  .smell-chart .thresh { stroke: var(--red); stroke-width: 1; stroke-dasharray: 4 3; opacity: 0.7; }
+  .smell-chart .area { fill: var(--sage); opacity: 0.18; }
+  .smell-chart .line { fill: none; stroke: var(--sage-deep); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+  .nose[data-s="foul"] .smell-chart .line { stroke: #8A8F3C; }
+  .smell-chart .hair { stroke: var(--ink-soft); stroke-width: 1; }
+  .smell-chart .dot { fill: var(--sage-deep); stroke: var(--panel); stroke-width: 2; }
+  .smell-chart .tip {
+    position: absolute; top: 0; pointer-events: none; transform: translateX(-50%);
+    background: rgba(14, 22, 38, 0.88); color: #E8ECF3; border-radius: 8px; padding: 5px 9px;
+    font-size: 0.76rem; line-height: 1.35; white-space: nowrap; font-variant-numeric: tabular-nums;
+  }
   .nose-actions { display: flex; gap: 8px; margin-top: 14px; flex-wrap: wrap; }
 
   /* Camera overlay badge */
@@ -599,6 +627,22 @@
     </h2>
     <div class="reading"><span id="verdict-label">Air quality</span><strong class="verdict" id="verdict" data-s="warming">—</strong></div>
     <div class="meter" id="stink-meter"><span id="stink-fill"></span></div>
+    <dl class="readouts" id="readouts" aria-live="off"></dl>
+    <figure class="smell-chart" id="smell-chart">
+      <figcaption>Stink score, last 2 minutes</figcaption>
+      <div class="plot" id="smell-plot">
+        <svg id="smell-svg" preserveAspectRatio="none" role="img" aria-label="Live stink score over the last two minutes">
+          <g id="smell-grid"></g>
+          <line id="smell-thresh" class="thresh"/>
+          <text id="smell-thresh-label" class="thresh-label">roast line</text>
+          <path id="smell-area" class="area"/>
+          <path id="smell-line" class="line"/>
+          <line id="smell-hair" class="hair" visibility="hidden"/>
+          <circle id="smell-dot" class="dot" r="4" visibility="hidden"/>
+        </svg>
+        <div class="tip" id="smell-tip" hidden></div>
+      </div>
+    </figure>
     <p class="raw" id="stink-raw">Waiting for the sensor…</p>
     <div class="nose-actions">
       <button class="ghost" id="stink-test">Trigger stink</button>
@@ -666,6 +710,7 @@
       if (msg.type === "state") render(msg);
       else if (msg.type === "reaction") onReaction(msg);
       else if (msg.type === "spoken") onSpoken(msg);
+      else if (msg.type === "smell_history") loadSmellHistory(msg.points || []);
     };
     ws.onclose = () => {
       setStatus("bad", "Bridge offline. Is bridge.py running?");
@@ -851,11 +896,171 @@
 
     const bits = [];
     if (n.warming) bits.push(`learning baseline, ${Math.ceil(n.warmup_left || 0)}s left`);
-    else bits.push(`score ${score.toFixed(0)}/100 · baseline ${n.baseline ?? "—"}`);
-    Object.entries(n.raw || {}).forEach(([k, val]) => bits.push(`${k} ${val}`));
     bits.push(`source: ${n.source || "none"}`);
+    if (n.at) bits.push(`last reading ${new Date(n.at * 1000).toLocaleTimeString()}`);
     $("stink-raw").textContent = bits.join(" · ");
+
+    renderReadouts(n);
+    if (typeof n.stink_on === "number") stinkOn = n.stink_on;
+    if (n.at && n.at !== lastSmellAt) {
+      lastSmellAt = n.at;
+      smellPoints.push({ at: n.at, score, warming: !!n.warming, raw: n.raw || {} });
+      trimSmell();
+      drawSmell();
+    }
   }
+
+  /* ---------- Live smell numbers ---------- */
+  // Labels and units for every key a sensor might send (nose.py docstring, bridge.parse_env).
+  const SMELL_FIELDS = {
+    tvoc:     { label: "TVOC",     unit: "ppb" },
+    eco2:     { label: "eCO₂",     unit: "ppm" },
+    gas_ohms: { label: "Gas",      unit: "kΩ", scale: 1e-3, digits: 1 },
+    temp_c:   { label: "Temp",     unit: "°C", digits: 1 },
+    rh:       { label: "Humidity", unit: "%",  digits: 0 },
+    hpa:      { label: "Pressure", unit: "hPa", digits: 0 },
+  };
+  const SMELL_WINDOW_S = 120;
+  let smellPoints = [], lastSmellAt = null, stinkOn = 65, hoverAt = null;
+
+  function fmtField(key, val) {
+    const f = SMELL_FIELDS[key] || { label: key, unit: "" };
+    if (typeof val !== "number") return { label: f.label, text: String(val ?? "—"), unit: f.unit };
+    const v = val * (f.scale || 1);
+    const text = f.digits != null ? v.toFixed(f.digits) : (Math.abs(v) >= 100 ? v.toFixed(0) : v.toFixed(1));
+    return { label: f.label, text, unit: f.unit };
+  }
+
+  function renderReadouts(n) {
+    const rows = [
+      { key: "score", label: "Score", text: n.warming ? "—" : (n.score ?? 0).toFixed(0), unit: "/100" },
+      { key: "baseline", label: "Baseline", text: n.baseline != null ? String(n.baseline) : "—", unit: "" },
+      ...Object.entries(n.raw || {}).map(([k, v]) => ({ key: k, ...fmtField(k, v) })),
+    ];
+    const dl = $("readouts");
+    // Rebuild only when the set of fields changes, so the numbers tick in place.
+    const sig = rows.map((r) => r.key).join(",");
+    if (dl.dataset.sig !== sig) {
+      dl.dataset.sig = sig;
+      dl.innerHTML = "";
+      rows.forEach((r) => {
+        const d = document.createElement("div");
+        d.innerHTML = `<dt></dt><dd data-k="${r.key}"><span></span><small></small></dd>`;
+        d.querySelector("dt").textContent = r.label;
+        dl.appendChild(d);
+      });
+    }
+    rows.forEach((r) => {
+      const dd = dl.querySelector(`dd[data-k="${r.key}"]`);
+      const span = dd.querySelector("span");
+      if (span.textContent !== r.text) {
+        span.textContent = r.text;
+        dd.classList.remove("bump"); void dd.offsetWidth; dd.classList.add("bump");
+      }
+      dd.querySelector("small").textContent = r.unit;
+    });
+  }
+
+  function loadSmellHistory(points) {
+    smellPoints = points.filter((p) => p.at).map((p) => ({
+      at: p.at, score: p.score || 0, warming: !!p.warming, raw: p.raw || {},
+    }));
+    lastSmellAt = smellPoints.length ? smellPoints[smellPoints.length - 1].at : null;
+    trimSmell();
+    drawSmell();
+  }
+
+  function trimSmell() {
+    const cutoff = Date.now() / 1000 - SMELL_WINDOW_S - 5;
+    while (smellPoints.length && smellPoints[0].at < cutoff) smellPoints.shift();
+  }
+
+  // Layout in pixels, so text and strokes are not stretched by the SVG viewBox.
+  const PAD = { l: 26, r: 4, t: 6, b: 4 };
+  function smellGeom() {
+    const box = $("smell-plot").getBoundingClientRect();
+    const w = Math.max(50, box.width), h = Math.max(40, box.height);
+    const now = Date.now() / 1000;
+    const x = (at) => PAD.l + (1 - (now - at) / SMELL_WINDOW_S) * (w - PAD.l - PAD.r);
+    const y = (v) => PAD.t + (1 - Math.max(0, Math.min(100, v)) / 100) * (h - PAD.t - PAD.b);
+    return { w, h, x, y, now };
+  }
+
+  function drawSmell() {
+    const svg = $("smell-svg");
+    const g = smellGeom();
+    svg.setAttribute("viewBox", `0 0 ${g.w} ${g.h}`);
+
+    const grid = $("smell-grid");
+    grid.setAttribute("class", "grid");
+    grid.innerHTML = [0, 50, 100].map((v) =>
+      `<line x1="${PAD.l}" x2="${g.w - PAD.r}" y1="${g.y(v)}" y2="${g.y(v)}"/>` +
+      `<text x="${PAD.l - 5}" y="${g.y(v) + 3}" text-anchor="end">${v}</text>`).join("");
+
+    const ty = g.y(stinkOn);
+    const th = $("smell-thresh");
+    th.setAttribute("x1", PAD.l); th.setAttribute("x2", g.w - PAD.r);
+    th.setAttribute("y1", ty); th.setAttribute("y2", ty);
+    const tl = $("smell-thresh-label");
+    tl.setAttribute("x", g.w - PAD.r - 2); tl.setAttribute("y", ty - 4); tl.setAttribute("text-anchor", "end");
+
+    // Warm-up readings have no score yet; leave a gap rather than draw a fake zero.
+    const pts = smellPoints.filter((p) => !p.warming && g.now - p.at <= SMELL_WINDOW_S + 2);
+    if (!pts.length) {
+      $("smell-line").setAttribute("d", "");
+      $("smell-area").setAttribute("d", "");
+    } else {
+      const line = pts.map((p, i) => `${i ? "L" : "M"}${g.x(p.at).toFixed(1)},${g.y(p.score).toFixed(1)}`).join("");
+      $("smell-line").setAttribute("d", line);
+      const base = g.y(0);
+      $("smell-area").setAttribute("d",
+        `${line}L${g.x(pts[pts.length - 1].at).toFixed(1)},${base}L${g.x(pts[0].at).toFixed(1)},${base}Z`);
+    }
+    drawSmellHover(g, pts);
+  }
+
+  function drawSmellHover(g, pts) {
+    const hair = $("smell-hair"), dot = $("smell-dot"), tip = $("smell-tip");
+    if (hoverAt == null || !pts.length) {
+      hair.setAttribute("visibility", "hidden"); dot.setAttribute("visibility", "hidden"); tip.hidden = true;
+      return;
+    }
+    // Snap to the nearest reading.
+    let best = pts[0];
+    for (const p of pts) if (Math.abs(p.at - hoverAt) < Math.abs(best.at - hoverAt)) best = p;
+    const px = g.x(best.at), py = g.y(best.score);
+    hair.setAttribute("x1", px); hair.setAttribute("x2", px);
+    hair.setAttribute("y1", PAD.t); hair.setAttribute("y2", g.h - PAD.b);
+    dot.setAttribute("cx", px); dot.setAttribute("cy", py);
+    hair.setAttribute("visibility", "visible"); dot.setAttribute("visibility", "visible");
+
+    const ago = Math.max(0, Math.round(g.now - best.at));
+    const lines = [`<strong>${best.score.toFixed(0)}</strong>/100 · ${ago}s ago`];
+    Object.entries(best.raw).forEach(([k, v]) => {
+      const f = fmtField(k, v);
+      lines.push(`${f.label} ${f.text}${f.unit ? " " + f.unit : ""}`);
+    });
+    tip.innerHTML = lines.join("<br>");
+    tip.hidden = false;
+    const half = tip.offsetWidth / 2;
+    tip.style.left = `${Math.max(half, Math.min(g.w - half, px))}px`;
+    tip.style.top = `${py > g.h / 2 ? 0 : g.h - tip.offsetHeight}px`;
+  }
+
+  (() => {
+    const plot = $("smell-plot");
+    plot.addEventListener("pointermove", (e) => {
+      const g = smellGeom();
+      const box = plot.getBoundingClientRect();
+      const frac = (e.clientX - box.left - PAD.l) / (g.w - PAD.l - PAD.r);
+      hoverAt = g.now - (1 - frac) * SMELL_WINDOW_S;
+      drawSmell();
+    });
+    plot.addEventListener("pointerleave", () => { hoverAt = null; drawSmell(); });
+    // Keep the chart scrolling even between readings (the car polls every few seconds).
+    setInterval(() => { trimSmell(); drawSmell(); }, 500);
+    addEventListener("resize", drawSmell);
+  })();
 
   const calm = matchMedia("(prefers-reduced-motion: reduce)");
   function lather() {

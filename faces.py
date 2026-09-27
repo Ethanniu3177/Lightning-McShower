@@ -317,12 +317,14 @@ def poses_from(boxes, keypoints):
 class Capturer:
     """Throttled face pass over vision's frames. Never blocks the event loop."""
 
-    def __init__(self, embedder, board, score_fn, on_change=None, waitlist=None):
+    def __init__(self, embedder, board, score_fn, on_change=None, waitlist=None,
+                 on_consent=None):
         self.embedder = embedder
         self.board = board
         self.waitlist = waitlist or Waitlist()
         self.score_fn = score_fn
         self.on_change = on_change or (lambda *_: None)
+        self.on_consent = on_consent or (lambda *_: None)
         self.enabled = True
         self._last = 0.0
         self._task = None
@@ -360,6 +362,7 @@ class Capturer:
                 ready = self.waitlist.see(vec, jpeg, score, raised_for(centre, poses))
                 if ready:
                     print("faces: hand up -- adding them to the leaderboard")
+                    self.on_consent()
                     self.board.observe(ready["embedding"], ready["jpeg"], ready["peak_score"])
                     changed = True
             except Exception as e:

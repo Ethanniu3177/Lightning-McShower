@@ -166,3 +166,47 @@ def test_warming_up_never_scores():
     assert m.warming
     assert m.score == 0
     assert not m.stinky
+
+
+# ---------- consent: ask once when someone steps close ----------
+
+def test_asks_consent_when_someone_steps_close():
+    r = make()
+    out = r.ask_consent(near=True, now=T0)
+    assert out is not None
+    assert out.text in lines.CONSENT
+    assert out.tier == "consent"
+
+
+def test_does_not_re_ask_while_still_near():
+    r = make()
+    r.ask_consent(near=True, now=T0)
+    assert r.ask_consent(near=True, now=T0 + 60) is None
+
+
+def test_consent_cooldown_across_approaches():
+    r = make()
+    r.ask_consent(near=True, now=T0)
+    r.ask_consent(near=False, now=T0 + 5)
+    assert r.ask_consent(near=True, now=T0 + 10) is None
+    r.ask_consent(near=False, now=T0 + 20)
+    assert r.ask_consent(near=True, now=T0 + reactor_mod.CONSENT_COOLDOWN_S + 1) is not None
+
+
+def test_muted_means_no_ask_and_no_thanks():
+    r = make()
+    r.muted = True
+    assert r.ask_consent(near=True, now=T0) is None
+    assert r.thank(now=T0) is None
+
+
+def test_thanks_line():
+    r = make()
+    out = r.thank(now=T0)
+    assert out is not None and out.text in lines.CONSENT_THANKS
+
+
+def test_consent_ask_does_not_block_a_roast():
+    r = make()
+    r.ask_consent(near=True, now=T0)
+    assert r.consider(person=True, stinky=True, now=T0 + 1) is not None

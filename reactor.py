@@ -24,6 +24,8 @@ COOLDOWN_S = 15.0
 # Quiet for this long and the next trigger is treated as a fresh victim,
 # so the robot starts over at tier 0 instead of opening with the meltdown.
 ENCOUNTER_RESET_S = 45.0
+# Minimum gap between two consent asks, so pacing back and forth isn't re-asked.
+CONSENT_COOLDOWN_S = 30.0
 
 
 @dataclass
@@ -41,6 +43,7 @@ class Reaction:
 class Reactor:
     cooldown: float = COOLDOWN_S
     encounter_reset: float = ENCOUNTER_RESET_S
+    consent_cooldown: float = CONSENT_COOLDOWN_S
     rng: random.Random = field(default_factory=random.Random)
 
     muted: bool = False
@@ -48,6 +51,8 @@ class Reactor:
     tier: int = 0
     last_text: str = ""
     history: list = field(default_factory=list)
+    last_ask: float = -1e9
+    was_near: bool = False
 
     # ---------- the gate ----------
     def consider(self, person, stinky, now=None):
@@ -69,6 +74,28 @@ class Reactor:
 
         return self._fire(self.tier, now, "auto")
 
+    # ---------- consent ----------
+    def ask_consent(self, near, now=None):
+        """Ask once when someone steps close. Separate from the roast cooldown."""
+        now = time.monotonic() if now is None else now
+        arrived = near and not self.was_near
+        self.was_near = bool(near)
+        if not arrived or self.muted or now - self.last_ask < self.consent_cooldown:
+            return None
+        self.last_ask = now
+        r = Reaction(text=self._pick(lines.CONSENT), tier="consent", at=now, reason="consent")
+        self._record(r, now, roast=False)
+        return r
+
+    def thank(self, now=None):
+        """They raised a hand."""
+        now = time.monotonic() if now is None else now
+        if self.muted:
+            return None
+        r = Reaction(text=self._pick(lines.CONSENT_THANKS), tier="thanks", at=now, reason="consent")
+        self._record(r, now, roast=False)
+        return r
+
     def manual(self, now=None, text=None):
         """The soap button. Bypasses the person/smell gate but not the mute switch."""
         now = time.monotonic() if now is None else now
@@ -85,20 +112,22 @@ class Reactor:
     # ---------- internals ----------
     def _fire(self, tier, now, reason):
         tier = max(0, min(tier, len(lines.TIERS) - 1))
-        r = Reaction(text=self._pick(tier), tier=lines.TIER_NAMES[tier], at=now, reason=reason)
+        r = Reaction(text=self._pick(lines.TIERS[tier]), tier=lines.TIER_NAMES[tier],
+                     at=now, reason=reason)
         self._record(r, now)
         # The bit builds: each line in one encounter is ruder than the last.
         self.tier = min(tier + 1, len(lines.TIERS) - 1)
         return r
 
-    def _pick(self, tier):
-        pool = lines.TIERS[tier]
+    def _pick(self, pool):
         # Saying the exact same thing twice kills the joke faster than anything.
         fresh = [t for t in pool if t != self.last_text] or pool
         return self.rng.choice(fresh)
 
-    def _record(self, reaction, now):
-        self.last_fire = now
+    def _record(self, reaction, now, roast=True):
+        # Consent lines don't count against the roast cooldown.
+        if roast:
+            self.last_fire = now
         self.last_text = reaction.text
         self.history.append(reaction)
         del self.history[:-20]

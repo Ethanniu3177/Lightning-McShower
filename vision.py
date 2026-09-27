@@ -45,6 +45,11 @@ WINDOW = 4
 NEEDED = 2
 HOLD_S = 1.5
 
+# "Near enough to ask for consent": a person's box is at least this share of the
+# frame height. Held for NEAR_HOLD_S after the last hit, like HOLD_S above.
+NEAR_FRAC = 0.45
+NEAR_HOLD_S = 1.5
+
 JPEG_SOI = b"\xff\xd8\xff"
 JPEG_EOI = b"\xff\xd9"
 MAX_BUFFER = 2 * 1024 * 1024   # a frame bigger than this means we lost sync
@@ -138,11 +143,13 @@ class Vision:
         self.boxes = []
         self.people = 0
         self.person = False
+        self.near = False
         self.fps = 0.0
         self.online = False
 
         self._recent = deque(maxlen=WINDOW)
         self._last_seen = -1e9
+        self._last_near = -1e9
         self._last_infer = 0.0
         self._infer_task = None
         self._frame_times = deque(maxlen=30)
@@ -182,30 +189,34 @@ class Vision:
         return {
             "people": self.people,
             "person": self.person,
+            "near": self.near,
             "fps": self.fps,
             "online": self.online,
             "enabled": self.enabled,
         }
 
     # ---------- presence ----------
-    def _note_detection(self, boxes):
+    def _note_detection(self, boxes, frame_h=None):
         now = time.monotonic()
         self.boxes = boxes
         self._recent.append(bool(boxes))
         if boxes:
             self._last_seen = now
+        if frame_h and any((y2 - y1) / frame_h >= NEAR_FRAC for (_, y1, _, y2, _) in boxes):
+            self._last_near = now
 
         people = len(boxes)
         present = (sum(self._recent) >= NEEDED) or (now - self._last_seen < HOLD_S)
-        if present != self.person or people != self.people:
-            self.person, self.people = present, people
+        near = present and now - self._last_near < NEAR_HOLD_S
+        if present != self.person or people != self.people or near != self.near:
+            self.person, self.people, self.near = present, people, near
             self.on_update(self.snapshot())
 
     def _set_online(self, online):
         if online != self.online:
             self.online = online
             if not online:
-                self.boxes, self.people, self.person = [], 0, False
+                self.boxes, self.people, self.person, self.near = [], 0, False, False
                 self._recent.clear()
             self.on_update(self.snapshot())
 
@@ -319,7 +330,7 @@ class Vision:
             self.enabled = False
             self.on_update(self.snapshot())
             return
-        self._note_detection(boxes)
+        self._note_detection(boxes, frame.shape[0])
         self.on_frame(frame, boxes, keypoints)
 
     def _draw(self, cv2, frame):

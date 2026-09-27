@@ -98,6 +98,7 @@ class Hub:
             "look": 0,
             "people": 0,
             "person": False,
+            "near": False,
             "vision": {"fps": 0.0, "online": False, "enabled": False},
             "smell": {"score": 0.0, "stinky": False, "raw": {}, "baseline": None,
                       "warming": True, "warmup_left": nose_mod.WARMUP_S, "source": "none"},
@@ -274,7 +275,8 @@ class ShowerBot:
 
     # Both callbacks are sync -- they are called from vision/nose internals.
     def on_vision(self, snap):
-        self.hub.update(people=snap["people"], person=snap["person"], vision=snap)
+        self.hub.update(people=snap["people"], person=snap["person"],
+                        near=snap.get("near", False), vision=snap)
         self.evaluate()
 
     def on_smell(self, snap):
@@ -282,10 +284,21 @@ class ShowerBot:
         self.evaluate()
 
     def evaluate(self):
+        # Someone just stepped close: ask before anything else, so a roast can't
+        # talk over the consent prompt.
+        ask = self.reactor.ask_consent(self.hub.state["near"])
+        if ask:
+            self.speak(ask)
+            return
         reaction = self.reactor.consider(
             person=self.hub.state["person"],
             stinky=self.hub.state["smell"]["stinky"],
         )
+        if reaction:
+            self.speak(reaction)
+
+    def consented(self):
+        reaction = self.reactor.thank()
         if reaction:
             self.speak(reaction)
 
@@ -391,6 +404,7 @@ def make_app(car, bot, hub, source, board):
         await ws.prepare(request)
         hub.clients.add(ws)
         await ws.send_str(json.dumps({"type": "state", **hub.state}))
+        await ws.send_str(json.dumps({"type": "smell_history", "points": bot.nose.history()}))
         try:
             async for msg in ws:
                 if msg.type != WSMsgType.TEXT:
@@ -524,6 +538,7 @@ def main():
             faces_mod.FaceEmbedder(), board,
             score_fn=lambda: hub.state["smell"]["score"],
             on_change=lambda rows: hub.event({"type": "leaderboard", "entries": rows}),
+            on_consent=bot.consented,
         )
         vis.on_frame = capturer.on_frame
     nose.on_update = bot.on_smell

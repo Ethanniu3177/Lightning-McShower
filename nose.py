@@ -22,6 +22,7 @@ Expected reading shapes (send whichever your sensor gives):
 """
 import asyncio
 import json
+from collections import deque
 import random
 import statistics
 import time
@@ -42,6 +43,10 @@ STINK_OFF = 45.0
 # These are in *intensity* units, i.e. after inversion -- 500 is the intensity of
 # a 2 MOhm reading, which is about as clean as a BME688 ever reports.
 FLOOR = {"tvoc": 40.0, "eco2": 420.0, "gas_ohms": 500.0}
+
+# Readings kept for the dashboard's live chart, so a freshly opened tab isn't blank.
+# At the fake source's 0.5 s that is two minutes; on the car's slower poll, longer.
+HISTORY_N = 240
 
 
 def intensity(raw):
@@ -71,6 +76,7 @@ class StinkMeter:
         self.score = 0.0
         self.stinky = False
         self.raw = {}
+        self.at = None       # wall-clock time of the last reading, for the live chart
 
     @property
     def warming(self):
@@ -89,6 +95,7 @@ class StinkMeter:
             return False
         self.raw = dict(raw)
         self.channel = channel
+        self.at = time.time()
 
         if self.warming:
             self.samples.append(value)
@@ -127,6 +134,9 @@ class StinkMeter:
             "warming": self.warming,
             "warmup_left": round(self.warmup_left, 1),
             "source": source_name,
+            "at": self.at,
+            "stink_on": STINK_ON,
+            "stink_off": STINK_OFF,
         }
 
 
@@ -247,17 +257,24 @@ class Nose:
         self.meter = StinkMeter()
         self.on_update = on_update
         self._pending = []
+        # Outlives recalibrate(), which resets the meter but not what already happened.
+        self.recent = deque(maxlen=HISTORY_N)
 
     def snapshot(self):
         return self.meter.snapshot(self.source.name)
+
+    def history(self):
+        return list(self.recent)
 
     async def run(self):
         loop = asyncio.get_running_loop()
 
         def emit(raw):
             if self.meter.update(raw):
+                snap = self.snapshot()
+                self.recent.append({k: snap[k] for k in ("at", "score", "warming", "stinky", "raw")})
                 # Sources may be synchronous; hop back onto the loop to notify.
-                loop.call_soon(self.on_update, self.snapshot())
+                loop.call_soon(self.on_update, snap)
 
         await self.source.run(emit)
 

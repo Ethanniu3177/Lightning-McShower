@@ -49,11 +49,28 @@ TIER_NAMES = ["mild", "rude", "savage"]
 # Spoken when someone mashes the soap button by hand instead of the sensor firing.
 MANUAL = "Attention. This has been a manual shower reminder. You know what you did."
 
+# Spoken once when someone walks up close, before any sniffing. Raising a hand is
+# the same yes that faces.py already watches for before adding anyone to the board.
+CONSENT = [
+    "Hi there! I'm ShowerBot. Can I give you a sniff? Raise your hand if that's a yes.",
+    "Hello, human! May I take a quick sniff? Raise a hand above your head to say yes.",
+    "Greetings. I am a smell robot. Raise your hand if I have your permission to sniff you.",
+]
+
+# Spoken when they raise a hand.
+CONSENT_THANKS = [
+    "Thank you! Sniffing now. Please hold still and think clean thoughts.",
+    "Consent received. Commencing sniff.",
+    "Wonderful. Initiating nostril protocol.",
+]
+
 
 def all_lines():
     """Every line with its tier name, for the ElevenLabs pre-generation step."""
     out = []
     for name, tier in zip(TIER_NAMES, TIERS):
         out.extend((name, text) for text in tier)
+    out.extend(("consent", text) for text in CONSENT)
+    out.extend(("thanks", text) for text in CONSENT_THANKS)
     out.append(("manual", MANUAL))
     return out
